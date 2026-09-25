@@ -20,6 +20,20 @@ void test('medical school offers eight one-hour shifts from 9 AM through 5 PM', 
   assert.ok(shifts.every((shift) => Date.parse(shift.endsAt) - Date.parse(shift.startsAt) === 60 * 60_000));
 });
 
+void test('tabling capacities match the approved staffing plan', () => {
+  const expectedCapacityByLocation = {
+    plaza: 10,
+    turlington: 15,
+    hpnp: 7,
+  } as const;
+
+  for (const [locationId, capacity] of Object.entries(expectedCapacityByLocation)) {
+    const shifts = SHIFTS.filter((shift) => shift.locationId === locationId && shift.taskId === 'tabling');
+    assert.ok(shifts.length > 0);
+    assert.ok(shifts.every((shift) => shift.capacity === capacity));
+  }
+});
+
 void test('publishes no law site and requires only one 1.5-hour training', () => {
   assert.equal(LOCATIONS.some((location) => /law/i.test(location.name)), false);
   assert.equal(SHIFTS.some((shift) => /law/i.test(shift.locationId)), false);

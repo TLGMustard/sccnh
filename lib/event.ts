@@ -194,8 +194,8 @@ export const SHIFTS: ShiftSeed[] = [
   ...greek,
   ...bagging,
   shift(wednesday, 'turlington', 'setup', 7, 30, 8, 0, 20),
-  ...timedShifts(wednesday, 'turlington', 8, 18, 30, 30),
+  ...timedShifts(wednesday, 'turlington', 8, 18, 30, 15),
   shift(wednesday, 'turlington', 'cleanup', 18, 0, 18, 30, 20),
-  ...timedShifts(wednesday, 'plaza', 8, 18, 30, 20),
-  ...timedShifts(wednesday, 'hpnp', 9, 17, 60, 15),
+  ...timedShifts(wednesday, 'plaza', 8, 18, 30, 10),
+  ...timedShifts(wednesday, 'hpnp', 9, 17, 60, 7),
 ];
