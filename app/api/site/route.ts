@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
       return reply({ message: 'Please wait before trying again.' }, 429);
     }
     if (body.action === 'claim') {
-      const result = await claimShift({ shiftId: textValue(body.shiftId), firstName: textValue(body.firstName), lastName: textValue(body.lastName), email: textValue(body.email), phone: textValue(body.phone), accessCode: textValue(body.accessCode) });
+      const result = await claimShift({ shiftId: textValue(body.shiftId), firstName: textValue(body.firstName), lastName: textValue(body.lastName), email: textValue(body.email), phone: textValue(body.phone), wantsSiteLead: body.wantsSiteLead === true, accessCode: textValue(body.accessCode) });
       return reply(result, result.ok ? 200 : 409);
     }
     if (body.action === 'mine') {

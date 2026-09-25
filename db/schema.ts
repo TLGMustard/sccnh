@@ -1,4 +1,4 @@
-import { index, integer, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
+import { boolean, index, integer, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
 
 export const events = pgTable('events', {
   id: text('id').primaryKey(), name: text('name').notNull(), tagline: text('tagline').notNull(), overview: text('overview').notNull(), startDate: text('start_date').notNull(), endDate: text('end_date').notNull(),
@@ -10,10 +10,10 @@ export const tasks = pgTable('tasks', {
   id: text('id').primaryKey(), name: text('name').notNull(), description: text('description').notNull(), training: text('training').notNull(),
 });
 export const shifts = pgTable('shifts', {
-  id: text('id').primaryKey(), day: text('day').notNull(), locationId: text('location_id').notNull().references(() => locations.id), taskId: text('task_id').notNull().references(() => tasks.id), startsAt: text('starts_at').notNull(), endsAt: text('ends_at').notNull(), capacity: integer('capacity').notNull(), title: text('title'), description: text('description'),
+  id: text('id').primaryKey(), day: text('day').notNull(), locationId: text('location_id').notNull().references(() => locations.id), taskId: text('task_id').notNull().references(() => tasks.id), startsAt: text('starts_at').notNull(), endsAt: text('ends_at').notNull(), capacity: integer('capacity').notNull(), title: text('title'), description: text('description'), isActive: boolean('is_active').notNull().default(true),
 }, (table) => [index('idx_shifts_day_start').on(table.day, table.startsAt)]);
 export const volunteers = pgTable('volunteers', {
-  id: text('id').primaryKey(), email: text('email').notNull(), firstName: text('first_name').notNull(), lastName: text('last_name').notNull(), phone: text('phone').notNull().default(''), accessCodeHash: text('access_code_hash').notNull(), createdAt: text('created_at').notNull(),
+  id: text('id').primaryKey(), email: text('email').notNull(), firstName: text('first_name').notNull(), lastName: text('last_name').notNull(), phone: text('phone').notNull().default(''), wantsSiteLead: boolean('wants_site_lead').notNull().default(false), accessCodeHash: text('access_code_hash').notNull(), createdAt: text('created_at').notNull(),
 }, (table) => [uniqueIndex('uq_volunteers_email').on(table.email)]);
 export const signups = pgTable('signups', {
   id: text('id').primaryKey(), volunteerId: text('volunteer_id').notNull().references(() => volunteers.id), shiftId: text('shift_id').notNull().references(() => shifts.id), status: text('status').notNull(), createdAt: text('created_at').notNull(), updatedAt: text('updated_at').notNull(),
