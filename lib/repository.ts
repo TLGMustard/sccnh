@@ -17,7 +17,7 @@ export type AdminSnapshot = { phase: EventPhase; volunteers: AdminVolunteer[]; s
 type VolunteerRow = { id: string; email: string; first_name: string; last_name: string; phone: string; wants_site_lead: boolean; access_code_hash: string };
 type ShiftRow = { id: string; day: string; location_id: string; task_id: string; starts_at: string; ends_at: string; capacity: number; title: string | null; description: string | null; location_name: string; location_short_name: string; location_blurb: string; walking_note: string; task_name: string; task_description: string; training: 'general' | 'lead'; filled: number };
 
-const SEED_VERSION = 'sccnh-2027-v3';
+const SEED_VERSION = 'sccnh-2027-v4';
 const SHIFT_SELECT = `SELECT s.id, s.day, s.location_id, s.task_id, s.starts_at, s.ends_at, s.capacity, s.title, s.description,
   l.name AS location_name, l.short_name AS location_short_name, l.blurb AS location_blurb, l.walking_note,
   t.name AS task_name, t.description AS task_description, t.training,
