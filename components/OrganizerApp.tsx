@@ -16,12 +16,17 @@ export function OrganizerApp({ organizerName }: { organizerName: string }) {
   const [data, setData] = useState<AdminSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [needsAccess, setNeedsAccess] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
     try {
       const response = await fetch('/api/admin', { cache: 'no-store' });
       const result = (await response.json()) as AdminSnapshot & { message?: string };
+      if (response.status === 401) {
+        setNeedsAccess(true);
+        return;
+      }
       if (!response.ok) {
         setError(result.message ?? 'Organizer data is unavailable.');
         return;
@@ -68,6 +73,7 @@ export function OrganizerApp({ organizerName }: { organizerName: string }) {
           <div className="flex items-center gap-2 border border-ink bg-paper-deep px-3 py-2 text-xs font-bold uppercase tracking-[.1em]"><span className="live-dot" /> Event phase: {data?.phase ?? 'loading'}</div>
         </div>
 
+        {needsAccess ? <OrganizerLogin onSignedIn={() => { setNeedsAccess(false); setLoading(true); void load(); }} /> : <>
         {error && <div role="alert" className="mt-5 flex items-center justify-between gap-3 border-2 border-poppy bg-poppy-wash p-3 text-sm font-bold text-poppy-dark"><span>{error}</span><button onClick={load} aria-label="Retry"><RefreshCw className="size-4" /></button></div>}
         {loading && <div className="mt-8 animate-pulse border-2 border-ink bg-paper-deep p-8 font-display text-2xl">Loading the operation board…</div>}
 
@@ -82,9 +88,26 @@ export function OrganizerApp({ organizerName }: { organizerName: string }) {
             <TabsContent value="check-in" className="mt-6"><CheckIn data={data} mutate={mutate} /></TabsContent>
           </Tabs>
         )}
+        </>}
       </main>
     </div>
   );
+}
+
+function OrganizerLogin({ onSignedIn }: { onSignedIn: () => void }) {
+  const [accessCode, setAccessCode] = useState('');
+  const [message, setMessage] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  async function signIn(event: React.SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault(); setPending(true); setMessage(null);
+    try {
+      const response = await fetch('/api/admin/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ accessCode }) });
+      if (!response.ok) { setMessage('Organizer sign-in required.'); return; }
+      onSignedIn();
+    } catch { setMessage('Organizer sign-in required.'); }
+    finally { setPending(false); }
+  }
+  return <form onSubmit={signIn} className="mx-auto mt-10 max-w-md border-2 border-blue bg-paper-deep p-6"><div className="eyebrow text-orange">Organizer access</div><h2 className="mt-1 font-display text-3xl font-black">Enter access code</h2><label className="mt-5 block"><span className="sr-only">Access code</span><input type="password" value={accessCode} onChange={(event) => setAccessCode(event.target.value)} required className="field-input" /></label>{message && <p role="alert" className="mt-3 text-sm">{message}</p>}<button type="submit" disabled={pending} className="mt-4 h-11 w-full bg-orange font-bold text-paper">{pending ? 'Checking' : 'Enter'}</button></form>;
 }
 
 function Overview({ data }: { data: AdminSnapshot }) {

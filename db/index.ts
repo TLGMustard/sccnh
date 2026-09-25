@@ -1,18 +1,21 @@
-import { env } from 'cloudflare:workers';
-import { drizzle } from 'drizzle-orm/d1';
-import * as schema from './schema';
+import postgres, { type Sql } from 'postgres';
 
-export function getDb() {
-  if (!env.DB) {
-    throw new Error(
-      'Cloudflare D1 binding `DB` is unavailable. Set the `d1` field in .openai/hosting.json to `DB` or let your control plane inject the real binding values before using the database.',
-    );
-  }
+let client: Sql | null = null;
 
-  return drizzle(env.DB, { schema });
+export function getDatabase(): Sql {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error('DATABASE_URL is required to access volunteer data.');
+  if (!client) client = postgres(url, { max: 5, prepare: false });
+  return client;
 }
 
-export function getD1(): D1Database {
-  if (!env.DB) throw new Error('The volunteer database is unavailable.');
-  return env.DB;
+export async function query<T extends Record<string, unknown>>(statement: string, values: unknown[] = []): Promise<T[]> {
+  let index = 0;
+  const sql = statement.replace(/\?/g, () => `$${++index}`);
+  return getDatabase().unsafe(sql, values) as Promise<T[]>;
+}
+
+export async function execute(statement: string, values: unknown[] = []): Promise<number> {
+  const result = await query(statement, values);
+  return Number((result as typeof result & { count?: number }).count ?? 0);
 }
