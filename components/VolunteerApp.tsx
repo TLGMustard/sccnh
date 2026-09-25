@@ -2,18 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Check, Clock3, MapPin, RefreshCw, UsersRound } from 'lucide-react';
+import { MapPin, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { formatTime, formatTimeRange } from '@/lib/domain';
 import type { PublicSnapshot, ShiftView, VolunteerDashboard } from '@/lib/repository';
 
 type View = 'signup' | 'mine';
-type Contact = { firstName: string; lastName: string; email: string; phone: string; accessCode: string };
+type Contact = { firstName: string; lastName: string; email: string; phone: string; accessCode: string; wantsSiteLead: boolean };
 type WebMcpTool = { name: string; title: string; description: string; inputSchema: object; annotations: { readOnlyHint: boolean; untrustedContentHint: boolean }; execute(input: unknown): unknown };
 type WebMcpContext = { registerTool(tool: WebMcpTool, options?: { signal?: AbortSignal }): void | Promise<void> };
 
-const EMPTY_CONTACT: Contact = { firstName: '', lastName: '', email: '', phone: '', accessCode: '' };
+const EMPTY_CONTACT: Contact = { firstName: '', lastName: '', email: '', phone: '', accessCode: '', wantsSiteLead: false };
 
 function compactDay(day: string): { weekday: string; date: string } {
   const date = new Date(`${day}T12:00:00Z`);
@@ -55,7 +55,7 @@ export function VolunteerApp({ initial }: { initial: PublicSnapshot }) {
 
   async function send(body: Record<string, unknown>) {
     const response = await fetch('/api/site', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    const result = await response.json() as { ok?: boolean; message?: string; dashboard?: VolunteerDashboard };
+    const result = await response.json() as { ok?: boolean; message?: string; dashboard?: VolunteerDashboard; receipt?: 'sent' | 'failed' };
     return { response, result };
   }
 
@@ -66,7 +66,7 @@ export function VolunteerApp({ initial }: { initial: PublicSnapshot }) {
     try {
       const { response, result } = await send({ action: 'claim', shiftId: selected.id, ...contact });
       if (!response.ok || !result.ok || !result.dashboard) setMessage(result.message ?? 'We could not save that shift.');
-      else { setDashboard(result.dashboard); setMessage('Shift saved.'); await refresh(); }
+      else { setDashboard(result.dashboard); setMessage(result.receipt === 'sent' ? 'Shift saved. Check your email for confirmation.' : 'Shift saved. We could not send the email receipt.'); await refresh(); }
     } catch { setMessage('We could not save that shift.'); }
     finally { setPending(false); }
   }
@@ -166,7 +166,7 @@ function ShiftSheet({ shift, contact, setContact, pending, message, onClaim, onC
   return <Sheet open={Boolean(shift)} onOpenChange={(open) => { if (!open) onClose(); }}>
     <SheetContent side="right" className="w-full max-w-xl gap-0 overflow-y-auto border-l-2 border-blue bg-paper p-0">
       {shift && <><SheetHeader className="border-b-2 border-blue bg-paper-deep p-5 pr-14 sm:p-7"><div className="eyebrow text-orange">{formatTimeRange(shift.startsAt, shift.endsAt)}</div><SheetTitle className="mt-2 font-display text-4xl font-black leading-[.9]">{shift.location.name}</SheetTitle><SheetDescription className="mt-2 text-base font-semibold text-orange">{shift.task.training} training</SheetDescription></SheetHeader>
-        <form onSubmit={onClaim} className="p-5 sm:p-7"><div className="grid grid-cols-2 gap-3"><Field label="First name" value={contact.firstName} onChange={(value) => setContact({ ...contact, firstName: value })} required /><Field label="Last name" value={contact.lastName} onChange={(value) => setContact({ ...contact, lastName: value })} required /><div className="col-span-2"><Field label="Email" type="email" value={contact.email} onChange={(value) => setContact({ ...contact, email: value })} required /></div><div className="col-span-2"><Field label="Access code" type="password" value={contact.accessCode} onChange={(value) => setContact({ ...contact, accessCode: value })} required /></div><div className="col-span-2"><Field label="Phone (optional)" type="tel" value={contact.phone} onChange={(value) => setContact({ ...contact, phone: value })} /></div></div><p className="mt-3 text-sm">Use at least 12 characters. You need this code to view or cancel shifts. SCCNH organizers may contact you about training and event changes.</p>{message && <p role="alert" className="mt-3 border border-orange bg-orange-wash p-3 text-sm">{message}</p>}<Button type="submit" disabled={pending || shift.remaining === 0} className="mt-4 h-12 w-full rounded-none bg-orange font-bold text-paper hover:bg-orange-dark">{shift.remaining === 0 ? 'Full' : pending ? 'Saving' : 'Save shift'}</Button>{message === 'Shift saved.' && <Button type="button" onClick={onMine} className="mt-3 h-11 w-full rounded-none border-2 border-blue bg-paper text-blue hover:bg-paper-deep">My shifts</Button>}</form></>}
+        <form onSubmit={onClaim} className="p-5 sm:p-7"><div className="grid grid-cols-2 gap-3"><Field label="First name" value={contact.firstName} onChange={(value) => setContact({ ...contact, firstName: value })} required /><Field label="Last name" value={contact.lastName} onChange={(value) => setContact({ ...contact, lastName: value })} required /><div className="col-span-2"><Field label="Email" type="email" value={contact.email} onChange={(value) => setContact({ ...contact, email: value })} required /></div><div className="col-span-2"><Field label="Phone" type="tel" value={contact.phone} onChange={(value) => setContact({ ...contact, phone: value })} required /></div><div className="col-span-2"><Field label="Access code" type="password" value={contact.accessCode} onChange={(value) => setContact({ ...contact, accessCode: value })} required /></div><label className="lead-choice col-span-2"><input type="checkbox" checked={contact.wantsSiteLead} onChange={(event) => setContact({ ...contact, wantsSiteLead: event.target.checked })} /><span><strong>Interested in being a site lead</strong><small>The VC of Ops will contact selected leads.</small></span></label></div><p className="mt-3 text-sm">Training is 1.5 hours. Bring your SCCNH shirt. Event shirts are provided at training. Use your access code to view or cancel shifts.</p>{message && <p role="alert" className="mt-3 border border-orange bg-orange-wash p-3 text-sm">{message}</p>}<Button type="submit" disabled={pending || shift.remaining === 0} className="mt-4 h-12 w-full rounded-none bg-orange font-bold text-paper hover:bg-orange-dark">{shift.remaining === 0 ? 'Full' : pending ? 'Saving' : 'Save shift'}</Button>{message?.startsWith('Shift saved.') && <Button type="button" onClick={onMine} className="mt-3 h-11 w-full rounded-none border-2 border-blue bg-paper text-blue hover:bg-paper-deep">My shifts</Button>}</form></>}
     </SheetContent>
   </Sheet>;
 }

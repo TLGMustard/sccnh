@@ -28,5 +28,6 @@ Use the printed value for `ADMIN_ACCESS_CODE_HASH`. Create `ADMIN_SESSION_SECRET
 - Organizer access requires an HTTP-only, strict same-site signed session cookie.
 - Access-code attempts are size-limited, malformed JSON is rejected, and repeated requests are slowed at the app process.
 - Confirmation receipts are sent through Resend after a reservation is saved. They contain shift details but never the access code.
+- Organizers can mark the required 1.5-hour training complete and cannot check in an untrained volunteer.
 
 Railway should keep this repository private and all three variables as secrets. If the service is scaled across several instances, also add Railway or Cloudflare rate limiting at the edge for a shared limit.
