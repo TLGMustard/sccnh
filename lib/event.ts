@@ -43,8 +43,9 @@ export const EVENT: EventInfo = {
   endDate: '2027-01-27',
   overview: 'Pick a shift.',
   essentials: [
-    'General training: 20 minutes.',
-    'Set-Up and Clean Up need lead training.',
+    'Training is 1.5 hours.',
+    'Bring your SCCNH shirt. Event shirts are provided at training.',
+    'Interested site leads will be contacted by the VC of Ops.',
   ],
 };
 
@@ -91,7 +92,7 @@ export const TASKS: TaskInfo[] = [
     id: 'setup',
     name: 'Set-Up',
     description: 'Unload tables and supplies, raise the canopy, place signs, and prepare the cream-cheese station.',
-    training: 'lead',
+    training: 'general',
   },
   {
     id: 'tabling',
@@ -103,7 +104,7 @@ export const TASKS: TaskInfo[] = [
     id: 'cleanup',
     name: 'Clean Up',
     description: 'Break down the table, bag trash, and return supplies to Hillel.',
-    training: 'lead',
+    training: 'general',
   },
   {
     id: 'bagging',
@@ -171,30 +172,11 @@ const bagging = [
   shift(tuesday, 'hillel', 'bagging', 19, 0, 20, 0, 30),
 ];
 
-const turlingtonCaps = [27, 30, 30, 30, 30, 25, 30, 23, 30, 20, 30, 18, 30, 18, 30, 20];
-const turlington: ShiftSeed[] = [shift(wednesday, 'turlington', 'setup', 8, 30, 9, 0, 20)];
-for (let index = 0; index < turlingtonCaps.length; index += 1) {
-  const start = 9 * 60 + index * 30;
-  const end = start + 30;
-  turlington.push(
-    shift(
-      wednesday,
-      'turlington',
-      'tabling',
-      Math.floor(start / 60),
-      start % 60,
-      Math.floor(end / 60),
-      end % 60,
-      turlingtonCaps[index],
-    ),
-  );
-}
-turlington.push(shift(wednesday, 'turlington', 'cleanup', 17, 0, 17, 30, 20));
-
-function halfHours(day: string, locationId: string, startHour: number, count: number, capacity: number): ShiftSeed[] {
+function timedShifts(day: string, locationId: string, startHour: number, endHour: number, minutes: 30 | 60, capacity: number): ShiftSeed[] {
+  const count = (endHour - startHour) * (60 / minutes);
   return Array.from({ length: count }, (_, index) => {
-    const start = startHour * 60 + index * 30;
-    const end = start + 30;
+    const start = startHour * 60 + index * minutes;
+    const end = start + minutes;
     return shift(
       day,
       locationId,
@@ -211,7 +193,9 @@ function halfHours(day: string, locationId: string, startHour: number, count: nu
 export const SHIFTS: ShiftSeed[] = [
   ...greek,
   ...bagging,
-  ...turlington,
-  ...halfHours(wednesday, 'plaza', 9, 16, 20),
-  ...halfHours(wednesday, 'hpnp', 10, 8, 15),
+  shift(wednesday, 'turlington', 'setup', 7, 30, 8, 0, 20),
+  ...timedShifts(wednesday, 'turlington', 8, 18, 30, 30),
+  shift(wednesday, 'turlington', 'cleanup', 18, 0, 18, 30, 20),
+  ...timedShifts(wednesday, 'plaza', 8, 18, 30, 20),
+  ...timedShifts(wednesday, 'hpnp', 9, 17, 60, 15),
 ];
