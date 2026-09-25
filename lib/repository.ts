@@ -4,6 +4,7 @@ import { availability, eventPhase, isValidEmail, normalizeEmail, type Availabili
 import { EVENT, LOCATIONS, SHIFTS, TASKS, type ShiftSeed } from './event';
 import { normalizeSignupProfile } from './signup-profile';
 import { checkInDecision } from './check-in';
+import { shiftReservationDecision } from './shift-reservation';
 
 export type ShiftView = ShiftSeed & { location: (typeof LOCATIONS)[number]; task: (typeof TASKS)[number]; filled: number; remaining: number; state: AvailabilityState };
 export type PublicSnapshot = { event: typeof EVENT; essentials: string[]; phase: EventPhase; shifts: ShiftView[] };
@@ -74,7 +75,9 @@ export async function claimShift(input: { shiftId: string; firstName: string; la
   const profile = normalizeSignupProfile(input); const accessCode = validateAccessCode(input.accessCode);
   if (!profile.ok || !accessCode) return { ok: false, code: 'invalid_input', message: !profile.ok ? profile.message : 'Use an access code with at least 12 characters.' };
   const { firstName, lastName, email, phone, wantsSiteLead } = profile.value;
-  if (!(await query<{ id: string }>('SELECT id FROM shifts WHERE id = ? LIMIT 1', [input.shiftId])).length) return { ok: false, code: 'not_found', message: 'That shift is unavailable.' };
+  const shiftRows = await query<{ is_active: boolean; capacity: number; filled: number }>("SELECT s.is_active, s.capacity, (SELECT COUNT(*) FROM signups occupied WHERE occupied.shift_id = s.id AND occupied.status IN ('confirmed', 'checked_in')) AS filled FROM shifts s WHERE s.id = ? LIMIT 1", [input.shiftId]);
+  const shiftDecision = shiftReservationDecision({ exists: Boolean(shiftRows[0]), isActive: shiftRows[0]?.is_active ?? false, capacity: Number(shiftRows[0]?.capacity ?? 0), filled: Number(shiftRows[0]?.filled ?? 0) });
+  if (!shiftDecision.ok) return shiftDecision;
   const existing = await query<VolunteerRow>('SELECT id, email, first_name, last_name, phone, wants_site_lead, access_code_hash FROM volunteers WHERE email = ? LIMIT 1', [email]);
   let volunteer = existing[0];
   if (!volunteer) {
@@ -90,7 +93,7 @@ export async function claimShift(input: { shiftId: string; firstName: string; la
   if ((await query<{ status: SignupStatus }>("SELECT status FROM signups WHERE volunteer_id = ? AND shift_id = ? AND status IN ('confirmed', 'checked_in') LIMIT 1", [volunteer.id, input.shiftId])).length) return { ok: false, code: 'duplicate', message: 'You already have this shift.' };
   const timestamp = nowIso();
   const changed = await execute(`INSERT INTO signups (id, volunteer_id, shift_id, status, created_at, updated_at)
-    SELECT ?, ?, s.id, 'confirmed', ?, ? FROM shifts s WHERE s.id = ? AND s.capacity > (SELECT COUNT(*) FROM signups existing WHERE existing.shift_id = s.id AND existing.status IN ('confirmed', 'checked_in'))
+    SELECT ?, ?, s.id, 'confirmed', ?, ? FROM shifts s WHERE s.id = ? AND s.is_active = true AND s.capacity > (SELECT COUNT(*) FROM signups existing WHERE existing.shift_id = s.id AND existing.status IN ('confirmed', 'checked_in'))
     ON CONFLICT (volunteer_id, shift_id) DO UPDATE SET status = 'confirmed', updated_at = EXCLUDED.updated_at WHERE signups.status = 'cancelled'`, [crypto.randomUUID(), volunteer.id, timestamp, timestamp, input.shiftId]);
   if (!changed) return { ok: false, code: 'full', message: 'That shift just filled.' };
   return { ok: true, dashboard: await dashboardFor(volunteer) };

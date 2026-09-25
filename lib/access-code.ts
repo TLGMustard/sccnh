@@ -1,7 +1,4 @@
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
-import { promisify } from 'node:util';
-
-const scrypt = promisify(scryptCallback);
 const N = 32768;
 const R = 8;
 const P = 3;
@@ -30,7 +27,12 @@ export async function verifyAccessCode(codeInput: string, encoded: string): Prom
 }
 
 async function derive(code: string, salt: Buffer): Promise<Buffer> {
-  return Buffer.from(await scrypt(code, salt, DIGEST_BYTES, { N, r: R, p: P, maxmem: MAX_MEMORY }));
+  return new Promise((resolve, reject) => {
+    scryptCallback(code, salt, DIGEST_BYTES, { N, r: R, p: P, maxmem: MAX_MEMORY }, (error, derived) => {
+      if (error) reject(error);
+      else resolve(Buffer.from(derived));
+    });
+  });
 }
 
 function parseEncodedHash(value: string): { salt: Buffer; digest: Buffer } | null {

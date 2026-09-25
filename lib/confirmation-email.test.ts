@@ -8,7 +8,7 @@ const input = {
   accessCode: 'must-never-appear', appBaseUrl: 'https://signup.example',
 };
 
-test('builds a useful receipt without the access code', () => {
+void test('builds a useful receipt without the access code', () => {
   const message = buildShiftConfirmation(input);
   assert.match(message.text, /Turlington Plaza/);
   assert.match(message.text, /1\.5-hour training/);
@@ -17,7 +17,7 @@ test('builds a useful receipt without the access code', () => {
   assert.doesNotMatch(JSON.stringify(message), /must-never-appear/);
 });
 
-test('reports delivery failure without throwing away the reservation flow', async () => {
+void test('reports delivery failure without throwing away the reservation flow', async () => {
   assert.equal(await attemptShiftConfirmation(async () => { throw new Error('provider unavailable'); }), false);
   assert.equal(await attemptShiftConfirmation(async () => undefined), true);
 });

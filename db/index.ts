@@ -9,13 +9,13 @@ export function getDatabase(): Sql {
   return client;
 }
 
-export async function query<T extends Record<string, unknown>>(statement: string, values: unknown[] = []): Promise<T[]> {
+export async function query<T extends Record<string, unknown>>(statement: string, values: postgres.ParameterOrJSON<never>[] = []): Promise<T[]> {
   let index = 0;
   const sql = statement.replace(/\?/g, () => `$${++index}`);
   return getDatabase().unsafe(sql, values) as Promise<T[]>;
 }
 
-export async function execute(statement: string, values: unknown[] = []): Promise<number> {
+export async function execute(statement: string, values: postgres.ParameterOrJSON<never>[] = []): Promise<number> {
   const result = await query(statement, values);
   return Number((result as typeof result & { count?: number }).count ?? 0);
 }
