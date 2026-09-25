@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
     if (body.action === 'training') {
       result = await setTraining({
         volunteerId: textValue(body.volunteerId),
-        type: body.type === 'lead' ? 'lead' : 'general',
+        type: 'general',
         complete: Boolean(body.complete),
         completedBy: user.displayName,
       });

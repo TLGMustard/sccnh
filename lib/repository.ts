@@ -3,13 +3,14 @@ import { hashAccessCode, validateAccessCode, verifyAccessCode } from './access-c
 import { availability, eventPhase, isValidEmail, normalizeEmail, type AvailabilityState, type EventPhase, type SignupStatus } from './domain';
 import { EVENT, LOCATIONS, SHIFTS, TASKS, type ShiftSeed } from './event';
 import { normalizeSignupProfile } from './signup-profile';
+import { checkInDecision } from './check-in';
 
 export type ShiftView = ShiftSeed & { location: (typeof LOCATIONS)[number]; task: (typeof TASKS)[number]; filled: number; remaining: number; state: AvailabilityState };
 export type PublicSnapshot = { event: typeof EVENT; essentials: string[]; phase: EventPhase; shifts: ShiftView[] };
 export type VolunteerShift = ShiftView & { signupId: string; status: SignupStatus };
 export type VolunteerDashboard = { volunteer: { id: string; email: string; firstName: string; lastName: string; phone: string; wantsSiteLead: boolean }; trainings: { general: boolean; lead: boolean }; shifts: VolunteerShift[] };
 export type AdminVolunteer = VolunteerDashboard['volunteer'] & { shiftCount: number; trainings: { general: boolean; lead: boolean } };
-export type AdminSignup = { id: string; status: SignupStatus; volunteerId: string; volunteerName: string; email: string; phone: string; shiftId: string; locationName: string; taskName: string; startsAt: string };
+export type AdminSignup = { id: string; status: SignupStatus; volunteerId: string; volunteerName: string; email: string; phone: string; shiftId: string; locationName: string; taskName: string; startsAt: string; trainingComplete: boolean };
 export type AdminSnapshot = { phase: EventPhase; volunteers: AdminVolunteer[]; signups: AdminSignup[]; shifts: ShiftView[] };
 
 type VolunteerRow = { id: string; email: string; first_name: string; last_name: string; phone: string; wants_site_lead: boolean; access_code_hash: string };
@@ -105,10 +106,10 @@ export async function getAdminSnapshot(): Promise<AdminSnapshot> {
   await ensureReferenceData();
   const [volunteers, signups, shifts] = await Promise.all([
     query<{ id: string; email: string; first_name: string; last_name: string; phone: string; wants_site_lead: boolean; shift_count: number; general: number; lead: number }>("SELECT v.id, v.email, v.first_name, v.last_name, v.phone, v.wants_site_lead, COUNT(DISTINCT CASE WHEN sg.status IN ('confirmed', 'checked_in') THEN sg.id END) AS shift_count, MAX(CASE WHEN tr.type = 'general' THEN 1 ELSE 0 END) AS general, MAX(CASE WHEN tr.type = 'lead' THEN 1 ELSE 0 END) AS lead FROM volunteers v LEFT JOIN signups sg ON sg.volunteer_id = v.id LEFT JOIN trainings tr ON tr.volunteer_id = v.id GROUP BY v.id ORDER BY v.last_name, v.first_name"),
-    query<{ id: string; status: SignupStatus; volunteer_id: string; volunteer_name: string; email: string; phone: string; shift_id: string; location_name: string; task_name: string; starts_at: string }>("SELECT sg.id, sg.status, v.id AS volunteer_id, v.first_name || ' ' || v.last_name AS volunteer_name, v.email, v.phone, s.id AS shift_id, l.name AS location_name, t.name AS task_name, s.starts_at FROM signups sg JOIN volunteers v ON v.id = sg.volunteer_id JOIN shifts s ON s.id = sg.shift_id JOIN locations l ON l.id = s.location_id JOIN tasks t ON t.id = s.task_id WHERE sg.status IN ('confirmed', 'checked_in') ORDER BY s.starts_at, v.last_name, v.first_name"),
+    query<{ id: string; status: SignupStatus; volunteer_id: string; volunteer_name: string; email: string; phone: string; shift_id: string; location_name: string; task_name: string; starts_at: string; training_complete: boolean }>("SELECT sg.id, sg.status, v.id AS volunteer_id, v.first_name || ' ' || v.last_name AS volunteer_name, v.email, v.phone, s.id AS shift_id, l.name AS location_name, t.name AS task_name, s.starts_at, EXISTS (SELECT 1 FROM trainings completed WHERE completed.volunteer_id = v.id AND completed.type = 'general') AS training_complete FROM signups sg JOIN volunteers v ON v.id = sg.volunteer_id JOIN shifts s ON s.id = sg.shift_id JOIN locations l ON l.id = s.location_id JOIN tasks t ON t.id = s.task_id WHERE sg.status IN ('confirmed', 'checked_in') ORDER BY s.starts_at, v.last_name, v.first_name"),
     listShiftViews(),
   ]);
-  return { phase: eventPhase(), volunteers: volunteers.map((row) => ({ id: row.id, email: row.email, firstName: row.first_name, lastName: row.last_name, phone: row.phone, wantsSiteLead: row.wants_site_lead, shiftCount: Number(row.shift_count), trainings: { general: Boolean(row.general), lead: Boolean(row.lead) } })), signups: signups.map((row) => ({ id: row.id, status: row.status, volunteerId: row.volunteer_id, volunteerName: row.volunteer_name, email: row.email, phone: row.phone, shiftId: row.shift_id, locationName: row.location_name, taskName: row.task_name, startsAt: row.starts_at })), shifts };
+  return { phase: eventPhase(), volunteers: volunteers.map((row) => ({ id: row.id, email: row.email, firstName: row.first_name, lastName: row.last_name, phone: row.phone, wantsSiteLead: row.wants_site_lead, shiftCount: Number(row.shift_count), trainings: { general: Boolean(row.general), lead: Boolean(row.lead) } })), signups: signups.map((row) => ({ id: row.id, status: row.status, volunteerId: row.volunteer_id, volunteerName: row.volunteer_name, email: row.email, phone: row.phone, shiftId: row.shift_id, locationName: row.location_name, taskName: row.task_name, startsAt: row.starts_at, trainingComplete: row.training_complete })), shifts };
 }
 
 export async function setTraining(input: { volunteerId: string; type: 'general' | 'lead'; complete: boolean; completedBy: string }): Promise<{ ok: boolean; message: string }> {
@@ -128,5 +129,9 @@ export async function updateCapacity(shiftId: string, capacity: number): Promise
 
 export async function setCheckedIn(signupId: string, checkedIn: boolean): Promise<{ ok: boolean; message: string }> {
   await ensureReferenceData(); if (eventPhase() !== 'during') return { ok: false, message: 'Check-in opens on January 25.' };
-  return (await execute("UPDATE signups SET status = ?, updated_at = ? WHERE id = ? AND status IN ('confirmed', 'checked_in')", [checkedIn ? 'checked_in' : 'confirmed', nowIso(), signupId])) ? { ok: true, message: checkedIn ? 'Volunteer checked in.' : 'Check-in removed.' } : { ok: false, message: 'Signup not found.' };
+  const rows = await query<{ training_complete: boolean }>("SELECT EXISTS (SELECT 1 FROM trainings tr WHERE tr.volunteer_id = sg.volunteer_id AND tr.type = 'general') AS training_complete FROM signups sg WHERE sg.id = ? AND sg.status IN ('confirmed', 'checked_in') LIMIT 1", [signupId]);
+  if (!rows[0]) return { ok: false, message: 'Signup not found.' };
+  const decision = checkInDecision({ checkingIn: checkedIn, trainingComplete: rows[0].training_complete });
+  if (!decision.allowed) return { ok: false, message: decision.message };
+  return (await execute("UPDATE signups SET status = ?, updated_at = ? WHERE id = ? AND status IN ('confirmed', 'checked_in')", [checkedIn ? 'checked_in' : 'confirmed', nowIso(), signupId])) ? { ok: true, message: decision.message } : { ok: false, message: 'Signup not found.' };
 }
