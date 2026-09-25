@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cancelSignup, claimShift, getPublicSnapshot, getVolunteerDashboard } from '@/lib/repository';
+import { attemptShiftConfirmation, buildShiftConfirmation, sendShiftConfirmation } from '@/lib/confirmation-email';
 import { createRateLimiter, isDeclaredJsonBodyTooLarge, parseJsonRequest, sensitiveResponseHeaders } from '@/lib/request-security';
 
 export const dynamic = 'force-dynamic';
@@ -32,7 +33,20 @@ export async function POST(request: NextRequest) {
     }
     if (body.action === 'claim') {
       const result = await claimShift({ shiftId: textValue(body.shiftId), firstName: textValue(body.firstName), lastName: textValue(body.lastName), email: textValue(body.email), phone: textValue(body.phone), wantsSiteLead: body.wantsSiteLead === true, accessCode: textValue(body.accessCode) });
-      return reply(result, result.ok ? 200 : 409);
+      if (!result.ok) return reply(result, 409);
+      const claimed = result.dashboard.shifts.find((shift) => shift.id === body.shiftId);
+      const delivered = Boolean(claimed) && await attemptShiftConfirmation(async () => {
+        const message = buildShiftConfirmation({
+          to: result.dashboard.volunteer.email,
+          firstName: result.dashboard.volunteer.firstName,
+          location: claimed!.location.name,
+          startsAt: claimed!.startsAt,
+          endsAt: claimed!.endsAt,
+          appBaseUrl: process.env.APP_BASE_URL || request.nextUrl.origin,
+        });
+        await sendShiftConfirmation(message);
+      });
+      return reply({ ...result, receipt: delivered ? 'sent' : 'failed' });
     }
     if (body.action === 'mine') {
       const dashboard = await getVolunteerDashboard(textValue(body.email), textValue(body.accessCode));
