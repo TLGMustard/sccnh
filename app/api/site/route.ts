@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cancelSignup, claimShift, getPublicSnapshot, getVolunteerDashboard } from '@/lib/repository';
+import { cancelSignup, changeSignup, claimShift, getPublicSnapshot, getVolunteerDashboard } from '@/lib/repository';
 import { attemptShiftConfirmation, buildShiftConfirmation, sendShiftConfirmation } from '@/lib/confirmation-email';
 import { createRateLimiter, isDeclaredJsonBodyTooLarge, parseJsonRequest, sensitiveResponseHeaders } from '@/lib/request-security';
 
@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
   if (!parsed.ok) return reply({ message: 'Invalid request.' }, parsed.status);
   try {
     const body = parsed.value;
-    if ((body.action === 'claim' || body.action === 'mine' || body.action === 'cancel') && !accessAttempts.allow(requestKey(request))) {
+    if ((body.action === 'claim' || body.action === 'mine' || body.action === 'cancel' || body.action === 'change') && !accessAttempts.allow(requestKey(request))) {
       return reply({ message: 'Please wait before trying again.' }, 429);
     }
     if (body.action === 'claim') {
@@ -55,6 +55,10 @@ export async function POST(request: NextRequest) {
     if (body.action === 'cancel') {
       const result = await cancelSignup(textValue(body.signupId), textValue(body.email), textValue(body.accessCode));
       return reply(result, result.ok ? 200 : 404);
+    }
+    if (body.action === 'change') {
+      const result = await changeSignup({ signupId: textValue(body.signupId), targetShiftId: textValue(body.targetShiftId), email: textValue(body.email), accessCode: textValue(body.accessCode) });
+      return reply(result, result.ok ? 200 : 409);
     }
     return reply({ message: 'Invalid request.' }, 400);
   } catch (error) {
