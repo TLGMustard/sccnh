@@ -130,7 +130,7 @@ export function VolunteerApp({ initial }: { initial: PublicSnapshot }) {
           <nav className="flex shrink-0 items-center gap-3 text-xs font-bold uppercase tracking-[.1em] sm:gap-5" aria-label="Site navigation">
             <button onClick={() => setView('signup')} className={view === 'signup' ? 'text-blue underline decoration-orange decoration-2 underline-offset-4' : 'text-blue'}>Schedule</button>
             <button onClick={() => setView('mine')} className={view === 'mine' ? 'text-blue underline decoration-orange decoration-2 underline-offset-4' : 'text-blue'}>My shifts</button>
-            <Link href="/admin" className="text-orange">Organizer</Link>
+            <Link href="/admin" prefetch={false} className="text-orange">Organizer</Link>
           </nav>
         </div>
       </header>

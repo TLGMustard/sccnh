@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Check, RefreshCw, Search, ShieldCheck, UsersRound } from 'lucide-react';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatDay, formatTimeRange } from '@/lib/domain';
 import type { AdminSnapshot, AdminSignup, AdminVolunteer, ShiftView } from '@/lib/repository';
 
@@ -11,13 +10,17 @@ type AdminAction =
   | { action: 'training'; volunteerId: string; type: 'general'; complete: boolean }
   | { action: 'capacity'; shiftId: string; capacity: number }
   | { action: 'checkin'; signupId: string; checkedIn: boolean }
-  | { action: 'cancel-signups'; volunteerId: string };
+  | { action: 'cancel-signups'; volunteerId: string }
+  | { action: 'delete-volunteer'; volunteerId: string };
+
+type OrganizerView = 'overview' | 'volunteers' | 'shifts' | 'check-in';
 
 export function OrganizerApp({ organizerName }: { organizerName: string }) {
   const [data, setData] = useState<AdminSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [needsAccess, setNeedsAccess] = useState(false);
+  const [view, setView] = useState<OrganizerView>('overview');
 
   const load = useCallback(async () => {
     setError(null);
@@ -64,7 +67,7 @@ export function OrganizerApp({ organizerName }: { organizerName: string }) {
     <div className="min-h-screen bg-paper text-ink">
       <header className="border-b-2 border-ink bg-ink text-paper">
         <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-4 px-4 py-3 sm:px-7">
-          <Link href="/" className="flex items-center gap-2 text-sm font-bold uppercase tracking-[.1em]"><ArrowLeft className="size-4" /> Volunteer site</Link>
+          <Link href="/" prefetch={false} className="flex items-center gap-2 text-sm font-bold uppercase tracking-[.1em]"><ArrowLeft className="size-4" /> Volunteer site</Link>
           <div className="flex items-center gap-2 text-right"><ShieldCheck className="size-5 text-[#f06a43]" /><span className="text-xs font-bold uppercase tracking-[.1em]">{organizerName}</span></div>
         </div>
       </header>
@@ -78,17 +81,7 @@ export function OrganizerApp({ organizerName }: { organizerName: string }) {
         {error && <div role="alert" className="mt-5 flex items-center justify-between gap-3 border-2 border-poppy bg-poppy-wash p-3 text-sm font-bold text-poppy-dark"><span>{error}</span><button onClick={load} aria-label="Retry"><RefreshCw className="size-4" /></button></div>}
         {loading && <div className="mt-8 animate-pulse border-2 border-ink bg-paper-deep p-8 font-display text-2xl">Loading the operation board…</div>}
 
-        {data && (
-          <Tabs defaultValue="overview" className="mt-7">
-            <TabsList variant="line" className="grid h-auto w-full grid-cols-4 gap-0 border-2 border-ink p-0">
-              {['overview', 'volunteers', 'shifts', 'check-in'].map((tab) => <TabsTrigger key={tab} value={tab} className="day-tab h-auto rounded-none border-r-2 border-ink px-2 py-3 text-xs font-black uppercase tracking-[.08em] last:border-r-0 sm:text-sm">{tab}</TabsTrigger>)}
-            </TabsList>
-            <TabsContent value="overview" className="mt-6"><Overview data={data} /></TabsContent>
-            <TabsContent value="volunteers" className="mt-6"><VolunteerRoster volunteers={data.volunteers} mutate={mutate} /></TabsContent>
-            <TabsContent value="shifts" className="mt-6"><ShiftManager shifts={data.shifts} mutate={mutate} /></TabsContent>
-            <TabsContent value="check-in" className="mt-6"><CheckIn data={data} mutate={mutate} /></TabsContent>
-          </Tabs>
-        )}
+        {data && <section className="mt-7"><nav className="grid grid-cols-2 border-2 border-ink sm:grid-cols-4" aria-label="Organizer sections">{(['overview', 'volunteers', 'shifts', 'check-in'] as OrganizerView[]).map((tab) => <button key={tab} type="button" onClick={() => setView(tab)} aria-current={view === tab ? 'page' : undefined} className={`min-h-12 border-b-2 border-r-2 border-ink px-3 py-3 text-sm font-black uppercase tracking-[.08em] last:border-r-0 sm:border-b-0 ${view === tab ? 'bg-blue text-paper' : 'bg-paper text-ink hover:bg-paper-deep'}`}>{tab}</button>)}</nav><div className="mt-6">{view === 'overview' && <Overview data={data} />}{view === 'volunteers' && <VolunteerRoster volunteers={data.volunteers} mutate={mutate} />}{view === 'shifts' && <ShiftManager shifts={data.shifts} mutate={mutate} />}{view === 'check-in' && <CheckIn data={data} mutate={mutate} />}</div></section>}
         </>}
       </main>
     </div>
@@ -159,11 +152,18 @@ function VolunteerRoster({ volunteers, mutate }: { volunteers: AdminVolunteer[];
     await mutate({ action: 'cancel-signups', volunteerId: volunteer.id });
     setPending(null);
   }
+  async function removeVolunteer(volunteer: AdminVolunteer) {
+    if (!window.confirm(`Remove ${volunteer.firstName} ${volunteer.lastName} and all of their signup and training records? This cannot be undone.`)) return;
+    const key = `${volunteer.id}:delete`;
+    setPending(key);
+    await mutate({ action: 'delete-volunteer', volunteerId: volunteer.id });
+    setPending(null);
+  }
   return (
     <section>
       <SectionHeader title="Volunteer roster" copy="Search every person once, then mark training across every shift they hold." />
       <label className="mt-5 flex max-w-md items-center gap-2 border-2 border-ink bg-paper-deep px-3"><Search className="size-4" /><span className="sr-only">Search volunteers</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name or email" className="h-11 min-w-0 flex-1 bg-transparent outline-none" /></label>
-      {rows.length ? <div className="mt-4 overflow-x-auto border-2 border-ink"><table className="w-full min-w-[840px] border-collapse text-left"><thead className="bg-ink text-paper"><tr><th className="px-3 py-2 text-xs uppercase tracking-[.1em]">Volunteer</th><th className="px-3 py-2 text-xs uppercase tracking-[.1em]">Contact</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Shifts</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Training</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Site lead</th><th className="px-3 py-2 text-right text-xs uppercase tracking-[.1em]">Action</th></tr></thead><tbody>{rows.map((volunteer) => <tr key={volunteer.id} className="border-b border-ink last:border-b-0"><td className="px-3 py-3 font-bold">{volunteer.lastName}, {volunteer.firstName}</td><td className="px-3 py-3 text-sm text-ink-soft"><div>{volunteer.email}</div><div>{volunteer.phone}</div></td><td className="px-3 py-3 text-center font-display text-xl font-black">{volunteer.shiftCount}</td><td className="px-3 py-3 text-center"><button onClick={() => toggle(volunteer)} disabled={pending === `${volunteer.id}:general`} aria-pressed={volunteer.trainings.general} className={`mx-auto grid size-8 place-items-center border-2 border-ink ${volunteer.trainings.general ? 'bg-ink text-paper' : 'bg-paper text-transparent'}`}><Check className="size-4" /></button></td><td className="px-3 py-3 text-center text-sm font-bold">{volunteer.wantsSiteLead ? 'Interested' : 'No'}</td><td className="px-3 py-3 text-right"><button onClick={() => cancelShifts(volunteer)} disabled={!volunteer.shiftCount || pending === `${volunteer.id}:cancel`} className="border border-poppy px-2 py-1 text-xs font-bold uppercase tracking-[.08em] text-poppy-dark hover:bg-poppy hover:text-paper disabled:cursor-not-allowed disabled:opacity-40">Cancel shifts</button></td></tr>)}</tbody></table></div> : <Empty title="No volunteers match." copy={volunteers.length ? 'Try another name or email.' : 'Volunteer records will appear after the first signup.'} />}
+      {rows.length ? <div className="mt-4 overflow-x-auto border-2 border-ink"><table className="w-full min-w-[930px] border-collapse text-left"><thead className="bg-ink text-paper"><tr><th className="px-3 py-2 text-xs uppercase tracking-[.1em]">Volunteer</th><th className="px-3 py-2 text-xs uppercase tracking-[.1em]">Contact</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Shifts</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Training</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Site lead</th><th className="px-3 py-2 text-right text-xs uppercase tracking-[.1em]">Action</th></tr></thead><tbody>{rows.map((volunteer) => <tr key={volunteer.id} className="border-b border-ink last:border-b-0"><td className="px-3 py-3 font-bold">{volunteer.lastName}, {volunteer.firstName}</td><td className="px-3 py-3 text-sm text-ink-soft"><div>{volunteer.email}</div><div>{volunteer.phone}</div></td><td className="px-3 py-3 text-center font-display text-xl font-black">{volunteer.shiftCount}</td><td className="px-3 py-3 text-center"><button onClick={() => toggle(volunteer)} disabled={pending === `${volunteer.id}:general`} aria-label={`Toggle training for ${volunteer.firstName} ${volunteer.lastName}`} aria-pressed={volunteer.trainings.general} className={`mx-auto grid size-8 place-items-center border-2 border-ink ${volunteer.trainings.general ? 'bg-ink text-paper' : 'bg-paper text-transparent'}`}><Check className="size-4" /></button></td><td className="px-3 py-3 text-center text-sm font-bold">{volunteer.wantsSiteLead ? 'Interested' : 'No'}</td><td className="px-3 py-3 text-right"><div className="flex justify-end gap-2"><button onClick={() => cancelShifts(volunteer)} disabled={!volunteer.shiftCount || pending === `${volunteer.id}:cancel`} aria-label={`Cancel active shifts for ${volunteer.firstName} ${volunteer.lastName}`} className="border border-poppy px-2 py-1 text-xs font-bold uppercase tracking-[.08em] text-poppy-dark hover:bg-poppy hover:text-paper disabled:cursor-not-allowed disabled:opacity-40">Cancel shifts</button><button onClick={() => removeVolunteer(volunteer)} disabled={pending === `${volunteer.id}:delete`} aria-label={`Remove ${volunteer.firstName} ${volunteer.lastName}`} className="border border-ink px-2 py-1 text-xs font-bold uppercase tracking-[.08em] text-ink hover:bg-ink hover:text-paper disabled:cursor-not-allowed disabled:opacity-40">Remove</button></div></td></tr>)}</tbody></table></div> : <Empty title="No volunteers match." copy={volunteers.length ? 'Try another name or email.' : 'Volunteer records will appear after the first signup.'} />}
     </section>
   );
 }

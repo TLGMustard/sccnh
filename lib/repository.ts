@@ -5,6 +5,7 @@ import { EVENT, LOCATIONS, SHIFTS, TASKS, type ShiftSeed } from './event';
 import { normalizeSignupProfile } from './signup-profile';
 import { checkInDecision } from './check-in';
 import { shiftChangeDecision, shiftReservationDecision } from './shift-reservation';
+import { volunteerRemovalDecision } from './admin-actions';
 
 export type ShiftView = ShiftSeed & { location: (typeof LOCATIONS)[number]; task: (typeof TASKS)[number]; filled: number; remaining: number; state: AvailabilityState };
 export type PublicSnapshot = { event: typeof EVENT; essentials: string[]; phase: EventPhase; shifts: ShiftView[] };
@@ -137,6 +138,20 @@ export async function cancelVolunteerSignups(volunteerId: string): Promise<{ ok:
   if (!volunteerId) return { ok: false, message: 'Volunteer not found.' };
   const cancelled = await execute("UPDATE signups SET status = 'cancelled', updated_at = ? WHERE volunteer_id = ? AND status IN ('confirmed', 'checked_in')", [nowIso(), volunteerId]);
   return cancelled ? { ok: true, message: `${cancelled} active shift${cancelled === 1 ? '' : 's'} cancelled.` } : { ok: false, message: 'No active shifts found for this volunteer.' };
+}
+
+export async function deleteVolunteer(volunteerId: string): Promise<{ ok: boolean; message: string }> {
+  await ensureReferenceData();
+  const decision = volunteerRemovalDecision(volunteerId);
+  if (!decision.ok) return decision;
+  return getDatabase().begin(async (sql) => {
+    const volunteer = await sql.unsafe<{ id: string }[]>('SELECT id FROM volunteers WHERE id = $1 FOR UPDATE', [volunteerId]);
+    if (!volunteer[0]) return { ok: false, message: 'Volunteer not found.' };
+    await sql.unsafe('DELETE FROM trainings WHERE volunteer_id = $1', [volunteerId]);
+    await sql.unsafe('DELETE FROM signups WHERE volunteer_id = $1', [volunteerId]);
+    await sql.unsafe('DELETE FROM volunteers WHERE id = $1', [volunteerId]);
+    return { ok: true, message: 'Volunteer record removed.' };
+  });
 }
 
 export async function getAdminSnapshot(): Promise<AdminSnapshot> {

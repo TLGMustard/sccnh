@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { isOrganizer } from '@/lib/admin-auth';
 import {
   cancelVolunteerSignups,
+  deleteVolunteer,
   getAdminSnapshot,
   setCheckedIn,
   setTraining,
@@ -59,6 +60,8 @@ export async function POST(request: NextRequest) {
       result = await setCheckedIn(textValue(body.signupId), Boolean(body.checkedIn));
     } else if (body.action === 'cancel-signups') {
       result = await cancelVolunteerSignups(textValue(body.volunteerId));
+    } else if (body.action === 'delete-volunteer') {
+      result = await deleteVolunteer(textValue(body.volunteerId));
     } else {
       return reply({ message: 'Invalid request.' }, 400);
     }
