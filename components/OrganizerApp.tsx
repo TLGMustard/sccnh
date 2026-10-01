@@ -10,7 +10,8 @@ import type { AdminSnapshot, AdminSignup, AdminVolunteer, ShiftView } from '@/li
 type AdminAction =
   | { action: 'training'; volunteerId: string; type: 'general'; complete: boolean }
   | { action: 'capacity'; shiftId: string; capacity: number }
-  | { action: 'checkin'; signupId: string; checkedIn: boolean };
+  | { action: 'checkin'; signupId: string; checkedIn: boolean }
+  | { action: 'cancel-signups'; volunteerId: string };
 
 export function OrganizerApp({ organizerName }: { organizerName: string }) {
   const [data, setData] = useState<AdminSnapshot | null>(null);
@@ -151,11 +152,18 @@ function VolunteerRoster({ volunteers, mutate }: { volunteers: AdminVolunteer[];
     await mutate({ action: 'training', volunteerId: volunteer.id, type: 'general', complete: !volunteer.trainings.general });
     setPending(null);
   }
+  async function cancelShifts(volunteer: AdminVolunteer) {
+    if (!volunteer.shiftCount || !window.confirm(`Cancel ${volunteer.shiftCount} active shift${volunteer.shiftCount === 1 ? '' : 's'} for ${volunteer.firstName} ${volunteer.lastName}?`)) return;
+    const key = `${volunteer.id}:cancel`;
+    setPending(key);
+    await mutate({ action: 'cancel-signups', volunteerId: volunteer.id });
+    setPending(null);
+  }
   return (
     <section>
       <SectionHeader title="Volunteer roster" copy="Search every person once, then mark training across every shift they hold." />
       <label className="mt-5 flex max-w-md items-center gap-2 border-2 border-ink bg-paper-deep px-3"><Search className="size-4" /><span className="sr-only">Search volunteers</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name or email" className="h-11 min-w-0 flex-1 bg-transparent outline-none" /></label>
-      {rows.length ? <div className="mt-4 overflow-x-auto border-2 border-ink"><table className="w-full min-w-[720px] border-collapse text-left"><thead className="bg-ink text-paper"><tr><th className="px-3 py-2 text-xs uppercase tracking-[.1em]">Volunteer</th><th className="px-3 py-2 text-xs uppercase tracking-[.1em]">Contact</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Shifts</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Training</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Site lead</th></tr></thead><tbody>{rows.map((volunteer) => <tr key={volunteer.id} className="border-b border-ink last:border-b-0"><td className="px-3 py-3 font-bold">{volunteer.lastName}, {volunteer.firstName}</td><td className="px-3 py-3 text-sm text-ink-soft"><div>{volunteer.email}</div><div>{volunteer.phone}</div></td><td className="px-3 py-3 text-center font-display text-xl font-black">{volunteer.shiftCount}</td><td className="px-3 py-3 text-center"><button onClick={() => toggle(volunteer)} disabled={pending === `${volunteer.id}:general`} aria-pressed={volunteer.trainings.general} className={`mx-auto grid size-8 place-items-center border-2 border-ink ${volunteer.trainings.general ? 'bg-ink text-paper' : 'bg-paper text-transparent'}`}><Check className="size-4" /></button></td><td className="px-3 py-3 text-center text-sm font-bold">{volunteer.wantsSiteLead ? 'Interested' : 'No'}</td></tr>)}</tbody></table></div> : <Empty title="No volunteers match." copy={volunteers.length ? 'Try another name or email.' : 'Volunteer records will appear after the first signup.'} />}
+      {rows.length ? <div className="mt-4 overflow-x-auto border-2 border-ink"><table className="w-full min-w-[840px] border-collapse text-left"><thead className="bg-ink text-paper"><tr><th className="px-3 py-2 text-xs uppercase tracking-[.1em]">Volunteer</th><th className="px-3 py-2 text-xs uppercase tracking-[.1em]">Contact</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Shifts</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Training</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Site lead</th><th className="px-3 py-2 text-right text-xs uppercase tracking-[.1em]">Action</th></tr></thead><tbody>{rows.map((volunteer) => <tr key={volunteer.id} className="border-b border-ink last:border-b-0"><td className="px-3 py-3 font-bold">{volunteer.lastName}, {volunteer.firstName}</td><td className="px-3 py-3 text-sm text-ink-soft"><div>{volunteer.email}</div><div>{volunteer.phone}</div></td><td className="px-3 py-3 text-center font-display text-xl font-black">{volunteer.shiftCount}</td><td className="px-3 py-3 text-center"><button onClick={() => toggle(volunteer)} disabled={pending === `${volunteer.id}:general`} aria-pressed={volunteer.trainings.general} className={`mx-auto grid size-8 place-items-center border-2 border-ink ${volunteer.trainings.general ? 'bg-ink text-paper' : 'bg-paper text-transparent'}`}><Check className="size-4" /></button></td><td className="px-3 py-3 text-center text-sm font-bold">{volunteer.wantsSiteLead ? 'Interested' : 'No'}</td><td className="px-3 py-3 text-right"><button onClick={() => cancelShifts(volunteer)} disabled={!volunteer.shiftCount || pending === `${volunteer.id}:cancel`} className="border border-poppy px-2 py-1 text-xs font-bold uppercase tracking-[.08em] text-poppy-dark hover:bg-poppy hover:text-paper disabled:cursor-not-allowed disabled:opacity-40">Cancel shifts</button></td></tr>)}</tbody></table></div> : <Empty title="No volunteers match." copy={volunteers.length ? 'Try another name or email.' : 'Volunteer records will appear after the first signup.'} />}
     </section>
   );
 }

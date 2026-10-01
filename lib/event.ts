@@ -90,31 +90,31 @@ export const LOCATIONS: LocationInfo[] = [
 export const TASKS: TaskInfo[] = [
   {
     id: 'setup',
-    name: 'Set-Up',
+    name: 'Volunteering',
     description: 'Unload tables and supplies, raise the canopy, place signs, and prepare the cream-cheese station.',
     training: 'general',
   },
   {
     id: 'tabling',
-    name: 'Tabling',
+    name: 'Volunteering',
     description: 'Offer bagels, invite a two-minute conversation, listen more than you talk, and collect pledge cards.',
     training: 'general',
   },
   {
     id: 'cleanup',
-    name: 'Clean Up',
+    name: 'Volunteering',
     description: 'Break down the table, bag trash, and return supplies to Hillel.',
     training: 'general',
   },
   {
     id: 'bagging',
-    name: 'Bagel Bagging',
+    name: 'Pre-packaging',
     description: 'Work an indoor assembly line at Hillel: count, bag, label, and stack bagels for the next morning.',
     training: 'general',
   },
   {
     id: 'announcing',
-    name: 'Chapter Announcing',
+    name: 'Announcing',
     description: 'Visit chapter dinners, give a thirty-second event announcement, and leave a lawn sign.',
     training: 'general',
   },
@@ -193,9 +193,9 @@ function timedShifts(day: string, locationId: string, startHour: number, endHour
 export const SHIFTS: ShiftSeed[] = [
   ...greek,
   ...bagging,
-  shift(wednesday, 'turlington', 'setup', 7, 30, 8, 0, 20),
+  shift(wednesday, 'turlington', 'setup', 7, 30, 8, 0, 20, { title: 'Set-Up' }),
   ...timedShifts(wednesday, 'turlington', 8, 18, 30, 15),
-  shift(wednesday, 'turlington', 'cleanup', 18, 0, 18, 30, 20),
+  shift(wednesday, 'turlington', 'cleanup', 18, 0, 18, 30, 20, { title: 'Clean Up' }),
   ...timedShifts(wednesday, 'plaza', 8, 18, 30, 10),
   ...timedShifts(wednesday, 'hpnp', 9, 17, 60, 7),
 ];

@@ -17,7 +17,7 @@ export type AdminSnapshot = { phase: EventPhase; volunteers: AdminVolunteer[]; s
 type VolunteerRow = { id: string; email: string; first_name: string; last_name: string; phone: string; wants_site_lead: boolean; access_code_hash: string };
 type ShiftRow = { id: string; day: string; location_id: string; task_id: string; starts_at: string; ends_at: string; capacity: number; title: string | null; description: string | null; location_name: string; location_short_name: string; location_blurb: string; walking_note: string; task_name: string; task_description: string; training: 'general' | 'lead'; filled: number };
 
-const SEED_VERSION = 'sccnh-2027-v4';
+const SEED_VERSION = 'sccnh-2027-v5';
 const SHIFT_SELECT = `SELECT s.id, s.day, s.location_id, s.task_id, s.starts_at, s.ends_at, s.capacity, s.title, s.description,
   l.name AS location_name, l.short_name AS location_short_name, l.blurb AS location_blurb, l.walking_note,
   t.name AS task_name, t.description AS task_description, t.training,
@@ -103,6 +103,13 @@ export async function cancelSignup(signupId: string, emailInput: string, codeInp
   await ensureReferenceData(); const volunteer = await volunteerWithAccess(emailInput, codeInput);
   if (!volunteer) return { ok: false, message: 'That shift could not be found.' };
   return (await execute("UPDATE signups SET status = 'cancelled', updated_at = ? WHERE id = ? AND volunteer_id = ? AND status IN ('confirmed', 'checked_in')", [nowIso(), signupId, volunteer.id])) ? { ok: true, message: 'Shift cancelled.' } : { ok: false, message: 'That shift could not be found.' };
+}
+
+export async function cancelVolunteerSignups(volunteerId: string): Promise<{ ok: boolean; message: string }> {
+  await ensureReferenceData();
+  if (!volunteerId) return { ok: false, message: 'Volunteer not found.' };
+  const cancelled = await execute("UPDATE signups SET status = 'cancelled', updated_at = ? WHERE volunteer_id = ? AND status IN ('confirmed', 'checked_in')", [nowIso(), volunteerId]);
+  return cancelled ? { ok: true, message: `${cancelled} active shift${cancelled === 1 ? '' : 's'} cancelled.` } : { ok: false, message: 'No active shifts found for this volunteer.' };
 }
 
 export async function getAdminSnapshot(): Promise<AdminSnapshot> {
