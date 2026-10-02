@@ -11,7 +11,7 @@ type AdminAction =
   | { action: 'capacity'; shiftId: string; capacity: number }
   | { action: 'checkin'; signupId: string; checkedIn: boolean }
   | { action: 'cancel-signups'; volunteerId: string }
-  | { action: 'delete-volunteer'; volunteerId: string };
+  | { action: 'delete-volunteer'; volunteerId: string; confirmAccessCode: string };
 
 type OrganizerView = 'overview' | 'volunteers' | 'shifts' | 'check-in';
 
@@ -148,6 +148,8 @@ function Metric({ label, value }: { label: string; value: number }) {
 function VolunteerRoster({ volunteers, mutate }: { volunteers: AdminVolunteer[]; mutate: (action: AdminAction) => Promise<boolean> }) {
   const [query, setQuery] = useState('');
   const [pending, setPending] = useState<string | null>(null);
+  const [removalTarget, setRemovalTarget] = useState<AdminVolunteer | null>(null);
+  const [confirmAccessCode, setConfirmAccessCode] = useState('');
   const rows = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return volunteers.filter((volunteer) => !needle || `${volunteer.firstName} ${volunteer.lastName} ${volunteer.email}`.toLowerCase().includes(needle));
@@ -165,18 +167,28 @@ function VolunteerRoster({ volunteers, mutate }: { volunteers: AdminVolunteer[];
     await mutate({ action: 'cancel-signups', volunteerId: volunteer.id });
     setPending(null);
   }
-  async function removeVolunteer(volunteer: AdminVolunteer) {
+  function requestRemoval(volunteer: AdminVolunteer) {
     if (!window.confirm(`Remove ${volunteer.firstName} ${volunteer.lastName} and all of their signup and training records? This cannot be undone.`)) return;
+    setRemovalTarget(volunteer);
+    setConfirmAccessCode('');
+  }
+  async function removeVolunteer(event: React.SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!removalTarget || !confirmAccessCode) return;
+    const volunteer = removalTarget;
     const key = `${volunteer.id}:delete`;
     setPending(key);
-    await mutate({ action: 'delete-volunteer', volunteerId: volunteer.id });
+    const removed = await mutate({ action: 'delete-volunteer', volunteerId: volunteer.id, confirmAccessCode });
     setPending(null);
+    setConfirmAccessCode('');
+    if (removed) setRemovalTarget(null);
   }
   return (
     <section>
       <SectionHeader title="Volunteer roster" copy="Search every person once, then mark training across every shift they hold." />
       <label className="mt-5 flex max-w-md items-center gap-2 border-2 border-ink bg-paper-deep px-3"><Search className="size-4" /><span className="sr-only">Search volunteers</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name or email" className="h-11 min-w-0 flex-1 bg-transparent outline-none" /></label>
-      {rows.length ? <div className="mt-4 overflow-x-auto border-2 border-ink"><table className="w-full min-w-[930px] border-collapse text-left"><thead className="bg-ink text-paper"><tr><th className="px-3 py-2 text-xs uppercase tracking-[.1em]">Volunteer</th><th className="px-3 py-2 text-xs uppercase tracking-[.1em]">Contact</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Shifts</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Training</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Site lead</th><th className="px-3 py-2 text-right text-xs uppercase tracking-[.1em]">Action</th></tr></thead><tbody>{rows.map((volunteer) => <tr key={volunteer.id} className="border-b border-ink last:border-b-0"><td className="px-3 py-3 font-bold">{volunteer.lastName}, {volunteer.firstName}</td><td className="px-3 py-3 text-sm text-ink-soft"><div>{volunteer.email}</div><div>{volunteer.phone}</div></td><td className="px-3 py-3 text-center font-display text-xl font-black">{volunteer.shiftCount}</td><td className="px-3 py-3 text-center"><button onClick={() => toggle(volunteer)} disabled={pending === `${volunteer.id}:general`} aria-label={`Toggle training for ${volunteer.firstName} ${volunteer.lastName}`} aria-pressed={volunteer.trainings.general} className={`mx-auto grid size-8 place-items-center border-2 border-ink ${volunteer.trainings.general ? 'bg-ink text-paper' : 'bg-paper text-transparent'}`}><Check className="size-4" /></button></td><td className="px-3 py-3 text-center text-sm font-bold">{volunteer.wantsSiteLead ? 'Interested' : 'No'}</td><td className="px-3 py-3 text-right"><div className="flex justify-end gap-2"><button onClick={() => cancelShifts(volunteer)} disabled={!volunteer.shiftCount || pending === `${volunteer.id}:cancel`} aria-label={`Cancel active shifts for ${volunteer.firstName} ${volunteer.lastName}`} className="border border-poppy px-2 py-1 text-xs font-bold uppercase tracking-[.08em] text-poppy-dark hover:bg-poppy hover:text-paper disabled:cursor-not-allowed disabled:opacity-40">Cancel shifts</button><button onClick={() => removeVolunteer(volunteer)} disabled={pending === `${volunteer.id}:delete`} aria-label={`Remove ${volunteer.firstName} ${volunteer.lastName}`} className="border border-ink px-2 py-1 text-xs font-bold uppercase tracking-[.08em] text-ink hover:bg-ink hover:text-paper disabled:cursor-not-allowed disabled:opacity-40">Remove</button></div></td></tr>)}</tbody></table></div> : <Empty title="No volunteers match." copy={volunteers.length ? 'Try another name or email.' : 'Volunteer records will appear after the first signup.'} />}
+      {removalTarget && <form onSubmit={removeVolunteer} className="mt-4 border-2 border-orange bg-orange-wash p-4"><div className="eyebrow text-orange">Confirm removal</div><p className="mt-2 text-sm">Enter the organizer access code to remove <strong>{removalTarget.firstName} {removalTarget.lastName}</strong> and all related records.</p><div className="mt-3 flex flex-col gap-2 sm:flex-row"><label className="min-w-0 flex-1"><span className="sr-only">Organizer access code</span><input type="password" autoComplete="current-password" value={confirmAccessCode} onChange={(event) => setConfirmAccessCode(event.target.value)} required className="field-input" placeholder="Organizer access code" /></label><button type="submit" disabled={pending === `${removalTarget.id}:delete`} className="h-11 border-2 border-ink bg-ink px-4 text-sm font-bold uppercase tracking-[.08em] text-paper disabled:opacity-50">{pending === `${removalTarget.id}:delete` ? 'Removing' : 'Remove volunteer'}</button><button type="button" onClick={() => { setRemovalTarget(null); setConfirmAccessCode(''); }} disabled={Boolean(pending)} className="h-11 border-2 border-ink px-4 text-sm font-bold uppercase tracking-[.08em]">Cancel</button></div></form>}
+      {rows.length ? <div className="mt-4 overflow-x-auto border-2 border-ink"><table className="w-full min-w-[930px] border-collapse text-left"><thead className="bg-ink text-paper"><tr><th className="px-3 py-2 text-xs uppercase tracking-[.1em]">Volunteer</th><th className="px-3 py-2 text-xs uppercase tracking-[.1em]">Contact</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Shifts</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Training</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Site lead</th><th className="px-3 py-2 text-right text-xs uppercase tracking-[.1em]">Action</th></tr></thead><tbody>{rows.map((volunteer) => <tr key={volunteer.id} className="border-b border-ink last:border-b-0"><td className="px-3 py-3 font-bold">{volunteer.lastName}, {volunteer.firstName}</td><td className="px-3 py-3 text-sm text-ink-soft"><div>{volunteer.email}</div><div>{volunteer.phone}</div></td><td className="px-3 py-3 text-center font-display text-xl font-black">{volunteer.shiftCount}</td><td className="px-3 py-3 text-center"><button onClick={() => toggle(volunteer)} disabled={pending === `${volunteer.id}:general`} aria-label={`Toggle training for ${volunteer.firstName} ${volunteer.lastName}`} aria-pressed={volunteer.trainings.general} className={`mx-auto grid size-8 place-items-center border-2 border-ink ${volunteer.trainings.general ? 'bg-ink text-paper' : 'bg-paper text-transparent'}`}><Check className="size-4" /></button></td><td className="px-3 py-3 text-center text-sm font-bold">{volunteer.wantsSiteLead ? 'Interested' : 'No'}</td><td className="px-3 py-3 text-right"><div className="flex justify-end gap-2"><button onClick={() => cancelShifts(volunteer)} disabled={!volunteer.shiftCount || pending === `${volunteer.id}:cancel`} aria-label={`Cancel active shifts for ${volunteer.firstName} ${volunteer.lastName}`} className="border border-poppy px-2 py-1 text-xs font-bold uppercase tracking-[.08em] text-poppy-dark hover:bg-poppy hover:text-paper disabled:cursor-not-allowed disabled:opacity-40">Cancel shifts</button><button onClick={() => requestRemoval(volunteer)} disabled={pending === `${volunteer.id}:delete`} aria-label={`Remove ${volunteer.firstName} ${volunteer.lastName}`} className="border border-ink px-2 py-1 text-xs font-bold uppercase tracking-[.08em] text-ink hover:bg-ink hover:text-paper disabled:cursor-not-allowed disabled:opacity-40">Remove</button></div></td></tr>)}</tbody></table></div> : <Empty title="No volunteers match." copy={volunteers.length ? 'Try another name or email.' : 'Volunteer records will appear after the first signup.'} />}
     </section>
   );
 }
