@@ -72,10 +72,9 @@ export async function getVolunteerDashboard(emailInput: string, codeInput: strin
   await ensureReferenceData(); const volunteer = await volunteerWithAccess(emailInput, codeInput); return volunteer ? dashboardFor(volunteer) : null;
 }
 
-export async function volunteerExists(emailInput: string): Promise<boolean> {
-  const email = normalizeEmail(emailInput);
-  if (!isValidEmail(email)) return false;
-  return Boolean((await query<{ id: string }>('SELECT id FROM volunteers WHERE email = ? LIMIT 1', [email]))[0]);
+export async function hasVolunteerAccess(emailInput: string, codeInput: string): Promise<boolean> {
+  await ensureReferenceData();
+  return Boolean(await volunteerWithAccess(emailInput, codeInput));
 }
 
 export async function claimShift(input: { shiftId: string; firstName: string; lastName: string; email: string; phone: string; wantsSiteLead: boolean; accessCode: string }): Promise<{ ok: true; dashboard: VolunteerDashboard } | { ok: false; message: string; code: string }> {
@@ -91,8 +90,9 @@ export async function claimShift(input: { shiftId: string; firstName: string; la
     // Serialize the unique email identity before reading it again. SELECT FOR UPDATE
     // cannot lock a row that does not exist yet.
     await sql.unsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`volunteer-email:${email}`]);
-    const shiftRows = await sql.unsafe<{ is_active: boolean; capacity: number; filled: number }[]>("SELECT s.is_active, s.capacity, (SELECT COUNT(*) FROM signups occupied WHERE occupied.shift_id = s.id AND occupied.status IN ('confirmed', 'checked_in')) AS filled FROM shifts s WHERE s.id = $1 FOR UPDATE", [input.shiftId]);
-    const shiftDecision = shiftReservationDecision({ exists: Boolean(shiftRows[0]), isActive: shiftRows[0]?.is_active ?? false, capacity: Number(shiftRows[0]?.capacity ?? 0), filled: Number(shiftRows[0]?.filled ?? 0) });
+    const shiftRows = await sql.unsafe<{ is_active: boolean; capacity: number }[]>('SELECT is_active, capacity FROM shifts WHERE id = $1 FOR UPDATE', [input.shiftId]);
+    const filledRows = shiftRows[0] ? await sql.unsafe<{ filled: number }[]>("SELECT COUNT(*)::int AS filled FROM signups WHERE shift_id = $1 AND status IN ('confirmed', 'checked_in')", [input.shiftId]) : [];
+    const shiftDecision = shiftReservationDecision({ exists: Boolean(shiftRows[0]), isActive: shiftRows[0]?.is_active ?? false, capacity: Number(shiftRows[0]?.capacity ?? 0), filled: Number(filledRows[0]?.filled ?? 0) });
     if (!shiftDecision.ok) return shiftDecision;
 
     const existing = await sql.unsafe<VolunteerRow[]>('SELECT id, email, first_name, last_name, phone, wants_site_lead, access_code_hash FROM volunteers WHERE email = $1 LIMIT 1 FOR UPDATE', [email]);
@@ -139,8 +139,9 @@ export async function changeSignup(input: { signupId: string; targetShiftId: str
 
   const result = await getDatabase().begin(async (sql) => {
     const source = await sql.unsafe<{ shift_id: string }[]>('SELECT shift_id FROM signups WHERE id = $1 AND volunteer_id = $2 AND status = \'confirmed\' FOR UPDATE', [input.signupId, volunteer.id]);
-    const target = await sql.unsafe<{ is_active: boolean; capacity: number; filled: number }[]>('SELECT s.is_active, s.capacity, (SELECT COUNT(*) FROM signups occupied WHERE occupied.shift_id = s.id AND occupied.status IN (\'confirmed\', \'checked_in\')) AS filled FROM shifts s WHERE s.id = $1 FOR UPDATE', [input.targetShiftId]);
-    const decision = shiftChangeDecision({ sourceExists: Boolean(source[0]), sourceShiftId: source[0]?.shift_id ?? '', targetShiftId: input.targetShiftId, targetExists: Boolean(target[0]), targetIsActive: target[0]?.is_active ?? false, targetCapacity: Number(target[0]?.capacity ?? 0), targetFilled: Number(target[0]?.filled ?? 0) });
+    const target = await sql.unsafe<{ is_active: boolean; capacity: number }[]>('SELECT is_active, capacity FROM shifts WHERE id = $1 FOR UPDATE', [input.targetShiftId]);
+    const targetFilled = target[0] ? await sql.unsafe<{ filled: number }[]>("SELECT COUNT(*)::int AS filled FROM signups WHERE shift_id = $1 AND status IN ('confirmed', 'checked_in')", [input.targetShiftId]) : [];
+    const decision = shiftChangeDecision({ sourceExists: Boolean(source[0]), sourceShiftId: source[0]?.shift_id ?? '', targetShiftId: input.targetShiftId, targetExists: Boolean(target[0]), targetIsActive: target[0]?.is_active ?? false, targetCapacity: Number(target[0]?.capacity ?? 0), targetFilled: Number(targetFilled[0]?.filled ?? 0) });
     if (!decision.ok) return decision;
 
     const existing = await sql.unsafe<{ id: string }[]>('SELECT id FROM signups WHERE volunteer_id = $1 AND shift_id = $2 AND status IN (\'confirmed\', \'checked_in\') LIMIT 1', [volunteer.id, input.targetShiftId]);
@@ -201,8 +202,9 @@ export async function updateCapacity(shiftId: string, capacity: number): Promise
   await ensureReferenceData(); const next = Math.trunc(capacity);
   if (!Number.isFinite(next) || next < 0 || next > 500) return { ok: false, message: 'Capacity must be between 0 and 500.' };
   return getDatabase().begin(async (sql) => {
-    const rows = await sql.unsafe<{ id: string; filled: number }[]>("SELECT s.id, (SELECT COUNT(*) FROM signups occupied WHERE occupied.shift_id = s.id AND occupied.status IN ('confirmed', 'checked_in')) AS filled FROM shifts s WHERE s.id = $1 FOR UPDATE", [shiftId]);
-    const decision = capacityUpdateDecision({ exists: Boolean(rows[0]), requested: next, filled: Number(rows[0]?.filled ?? 0) });
+    const rows = await sql.unsafe<{ id: string }[]>('SELECT id FROM shifts WHERE id = $1 FOR UPDATE', [shiftId]);
+    const filledRows = rows[0] ? await sql.unsafe<{ filled: number }[]>("SELECT COUNT(*)::int AS filled FROM signups WHERE shift_id = $1 AND status IN ('confirmed', 'checked_in')", [shiftId]) : [];
+    const decision = capacityUpdateDecision({ exists: Boolean(rows[0]), requested: next, filled: Number(filledRows[0]?.filled ?? 0) });
     if (!decision.ok) return decision;
     await sql.unsafe('UPDATE shifts SET capacity = $1 WHERE id = $2', [next, shiftId]);
     return { ok: true, message: 'Capacity updated.' };

@@ -18,6 +18,7 @@ The organizer area contains volunteer names, email addresses, phone numbers, tra
 - Verification uses a six-digit, single-use code delivered by email. The database stores only a keyed digest of the email and code, an expiry, an attempt count, and consumption state.
 - A successful verification creates a short-lived, signed, HTTP-only cookie bound to the normalized email. The cookie contains no raw email address.
 - Existing volunteers continue to use their access code. Email verification never bypasses an existing access code.
+- Without a proof cookie, a claim proceeds directly only when the supplied access code authenticates an existing volunteer. An unknown email and a wrong code for an existing email both receive the same verification-required response after the same scrypt work.
 - Verification request and confirmation responses are generic. They do not disclose whether an email already has an account.
 - Enforcement is feature-gated for safe rollout. Code ships first, email delivery is tested, then `EMAIL_VERIFICATION_REQUIRED=true` is enabled.
 
@@ -46,7 +47,7 @@ The organizer area contains volunteer names, email addresses, phone numbers, tra
 
 ### Database integrity
 
-- Serialize claims and capacity changes by locking the target shift row inside a PostgreSQL transaction before counting occupied signups.
+- Serialize claims and capacity changes by locking the target shift row inside a PostgreSQL transaction, then count occupied signups in a second statement after the lock is acquired so a waiting transaction cannot reuse a stale statement snapshot.
 - Preserve the atomic change-shift guarantee: the original shift remains confirmed unless the target reservation succeeds.
 - Add non-validating database length constraints so new bad rows are rejected without risking a migration failure on existing data.
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cancelSignup, changeSignup, claimShift, getPublicSnapshot, getVolunteerDashboard, volunteerExists } from '@/lib/repository';
+import { cancelSignup, changeSignup, claimShift, getPublicSnapshot, getVolunteerDashboard, hasVolunteerAccess } from '@/lib/repository';
 import { attemptShiftConfirmation, buildShiftConfirmation, sendShiftConfirmation } from '@/lib/confirmation-email';
 import { readJsonRequest, requireSameOrigin, sensitiveResponseHeaders } from '@/lib/request-security';
 import { getApplicationOrigin } from '@/lib/app-config';
@@ -8,6 +8,7 @@ import { normalizeEmail } from '@/lib/domain';
 import { consumeRateLimit, type RateLimitPolicy } from '@/lib/rate-limit';
 import { emailProofCookieName, emailVerificationRequired, readEmailProof, verificationSecret } from '@/lib/email-verification';
 import { keyedDigest } from '@/lib/security-key';
+import { claimAuthorizationDecision } from '@/lib/claim-authorization';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,12 +57,16 @@ export async function POST(request: NextRequest) {
     if (body.action === 'claim') {
       const shiftId = boundedIdentifier(body.shiftId) ?? '';
       const email = normalizeEmail(textValue(body.email));
-      if (emailVerificationRequired() && !(await volunteerExists(email))) {
+      const verificationRequired = emailVerificationRequired();
+      if (verificationRequired) {
         try {
           const secret = verificationSecret();
           const emailKey = keyedDigest('email-verification', email, secret);
           const proof = readEmailProof(request.cookies.get(emailProofCookieName())?.value, emailKey, secret);
-          if (!proof) return reply({ ok: false, code: 'email_verification_required', message: 'Verify your email before saving this shift.' }, 403);
+          const existingAccessVerified = proof ? false : await hasVolunteerAccess(email, textValue(body.accessCode));
+          if (claimAuthorizationDecision({ verificationRequired, hasEmailProof: Boolean(proof), existingAccessVerified }) === 'verify-email') {
+            return reply({ ok: false, code: 'email_verification_required', message: 'Verify your email before saving this shift.' }, 403);
+          }
         } catch {
           console.error('security configuration unavailable');
           return reply({ message: 'Service configuration is unavailable.' }, 503);
