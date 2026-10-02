@@ -21,3 +21,16 @@ void test('reports delivery failure without throwing away the reservation flow',
   assert.equal(await attemptShiftConfirmation(async () => { throw new Error('provider unavailable'); }), false);
   assert.equal(await attemptShiftConfirmation(async () => undefined), true);
 });
+
+void test('escapes volunteer text and uses only the configured application origin', () => {
+  const message = buildShiftConfirmation({
+    ...input,
+    firstName: '<img src=x onerror=alert(1)>',
+    location: '<script>alert(1)</script>',
+    appBaseUrl: 'https://signup.example/private/path',
+  });
+  assert.doesNotMatch(message.html, /<img|<script/i);
+  assert.match(message.html, /&lt;img/);
+  assert.match(message.html, /href="https:\/\/signup\.example"/);
+  assert.doesNotMatch(message.html, /private\/path/);
+});

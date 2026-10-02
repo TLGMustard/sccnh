@@ -42,8 +42,8 @@ export async function attemptShiftConfirmation(send: () => Promise<void>): Promi
   try {
     await send();
     return true;
-  } catch (error) {
-    console.error('confirmation email failed', error instanceof Error ? error.message : 'Unknown error');
+  } catch {
+    console.error('confirmation email failed');
     return false;
   }
 }

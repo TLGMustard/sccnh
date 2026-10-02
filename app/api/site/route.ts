@@ -23,8 +23,8 @@ const volunteerPolicies: Record<string, RateLimitPolicy> = {
 export async function GET() {
   try {
     return reply(await getPublicSnapshot());
-  } catch (error) {
-    console.error('public schedule read failed', error);
+  } catch {
+    console.error('public schedule read failed');
     return reply({ message: 'Schedule data is unavailable.' }, 503);
   }
 }
@@ -33,8 +33,8 @@ export async function POST(request: NextRequest) {
   let appOrigin: string;
   try {
     appOrigin = getApplicationOrigin(request.nextUrl.origin);
-  } catch (error) {
-    console.error('security configuration unavailable', error instanceof Error ? error.message : 'Invalid application origin');
+  } catch {
+    console.error('security configuration unavailable');
     return reply({ message: 'Service configuration is unavailable.' }, 503);
   }
   if (!requireSameOrigin(request, appOrigin)) return reply({ message: 'Invalid request.' }, 403);
@@ -96,8 +96,8 @@ export async function POST(request: NextRequest) {
       return reply(result, result.ok ? 200 : 409);
     }
     return reply({ message: 'Invalid request.' }, 400);
-  } catch (error) {
-    console.error('volunteer action failed', error);
+  } catch {
+    console.error('volunteer action failed');
     return reply({ message: 'We could not save that change.' }, 503);
   }
 }

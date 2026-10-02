@@ -13,7 +13,14 @@ const EMAIL_MAX_BYTES = 254;
 const PHONE_MAX = 32;
 const PHONE_DIGITS_MIN = 7;
 const PHONE_DIGITS_MAX = 15;
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
+
+function hasControlCharacters(value: string): boolean {
+  for (const character of value) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code <= 31 || code === 127) return true;
+  }
+  return false;
+}
 
 export function boundedIdentifier(value: unknown): string | null {
   return typeof value === 'string' && value.length >= 1 && value.length <= 128 && /^[A-Za-z0-9:_-]+$/.test(value) ? value : null;
@@ -35,10 +42,10 @@ export function normalizeSignupProfile(input: {
   };
   const phoneDigits = value.phone.replace(/\D/g, '').length;
   if (
-    !value.firstName || value.firstName.length > NAME_MAX || CONTROL_CHARACTERS.test(value.firstName) ||
-    !value.lastName || value.lastName.length > NAME_MAX || CONTROL_CHARACTERS.test(value.lastName) ||
+    !value.firstName || value.firstName.length > NAME_MAX || hasControlCharacters(value.firstName) ||
+    !value.lastName || value.lastName.length > NAME_MAX || hasControlCharacters(value.lastName) ||
     !isValidEmail(value.email) || new TextEncoder().encode(value.email).byteLength > EMAIL_MAX_BYTES ||
-    !value.phone || value.phone.length > PHONE_MAX || CONTROL_CHARACTERS.test(value.phone) ||
+    !value.phone || value.phone.length > PHONE_MAX || hasControlCharacters(value.phone) ||
     phoneDigits < PHONE_DIGITS_MIN || phoneDigits > PHONE_DIGITS_MAX
   ) {
     return { ok: false, message: 'Enter your name, email, and phone number.' };

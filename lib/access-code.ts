@@ -17,7 +17,13 @@ export async function hashAccessCode(codeInput: string): Promise<string> {
   if (!code) throw new Error('Access code must be 12 to 128 characters.');
   const salt = randomBytes(16);
   const digest = await derive(code, salt);
-  return `scrypt$${N}$${R}$${P}$${salt.toString('base64url')}$${digest.toString('base64url')}`;
+  return `scrypt$${N}$${R}$${P}$${encodeBase64Url(salt)}$${encodeBase64Url(digest)}`;
+}
+
+function encodeBase64Url(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 }
 
 export async function verifyAccessCode(codeInput: string, encoded: string): Promise<boolean> {

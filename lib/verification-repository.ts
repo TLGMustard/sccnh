@@ -33,8 +33,8 @@ export async function requestEmailVerification(emailInput: string, now = Date.no
   );
   try {
     await sendEmail(buildVerificationEmail(email, code));
-  } catch (error) {
-    console.error('verification email failed', error instanceof Error ? error.message : 'Unknown error');
+  } catch {
+    console.error('verification email failed');
   }
 }
 

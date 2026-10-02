@@ -31,8 +31,8 @@ export async function POST(request: NextRequest) {
   let appOrigin: string;
   try {
     appOrigin = getApplicationOrigin(request.nextUrl.origin);
-  } catch (error) {
-    console.error('security configuration unavailable', error instanceof Error ? error.message : 'Invalid application origin');
+  } catch {
+    console.error('security configuration unavailable');
     return reply({ message: 'Service configuration is unavailable.' }, 503);
   }
   if (!requireSameOrigin(request, appOrigin)) return reply({ message: 'Invalid request.' }, 403);
@@ -72,8 +72,8 @@ export async function DELETE(request: NextRequest) {
   let appOrigin: string;
   try {
     appOrigin = getApplicationOrigin(request.nextUrl.origin);
-  } catch (error) {
-    console.error('security configuration unavailable', error instanceof Error ? error.message : 'Invalid application origin');
+  } catch {
+    console.error('security configuration unavailable');
     return clearAdminCookie(reply({ message: 'Service configuration is unavailable.' }, 503));
   }
   if (!requireSameOrigin(request, appOrigin)) return reply({ message: 'Invalid request.' }, 403);

@@ -45,8 +45,8 @@ export async function GET() {
   if (!session) return reply({ message: 'Organizer sign-in required.' }, 401);
   try {
     return reply(await getAdminSnapshot());
-  } catch (error) {
-    console.error('admin read failed', error);
+  } catch {
+    console.error('admin read failed');
     return reply({ message: 'Organizer data is unavailable.' }, 503);
   }
 }
@@ -55,8 +55,8 @@ export async function POST(request: NextRequest) {
   let appOrigin: string;
   try {
     appOrigin = getApplicationOrigin(request.nextUrl.origin);
-  } catch (error) {
-    console.error('security configuration unavailable', error instanceof Error ? error.message : 'Invalid application origin');
+  } catch {
+    console.error('security configuration unavailable');
     return reply({ message: 'Service configuration is unavailable.' }, 503);
   }
   if (!requireSameOrigin(request, appOrigin)) return reply({ message: 'Invalid request.' }, 403);
