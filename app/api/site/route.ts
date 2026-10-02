@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cancelSignup, changeSignup, claimShift, getPublicSnapshot, getVolunteerDashboard } from '@/lib/repository';
+import { cancelSignup, changeSignup, claimShift, getPublicSnapshot, getVolunteerDashboard, volunteerExists } from '@/lib/repository';
 import { attemptShiftConfirmation, buildShiftConfirmation, sendShiftConfirmation } from '@/lib/confirmation-email';
 import { readJsonRequest, requireSameOrigin, sensitiveResponseHeaders } from '@/lib/request-security';
 import { getApplicationOrigin } from '@/lib/app-config';
 import { boundedIdentifier } from '@/lib/signup-profile';
 import { normalizeEmail } from '@/lib/domain';
 import { consumeRateLimit, type RateLimitPolicy } from '@/lib/rate-limit';
+import { emailProofCookieName, emailVerificationRequired, readEmailProof, verificationSecret } from '@/lib/email-verification';
+import { keyedDigest } from '@/lib/security-key';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,7 +55,19 @@ export async function POST(request: NextRequest) {
     }
     if (body.action === 'claim') {
       const shiftId = boundedIdentifier(body.shiftId) ?? '';
-      const result = await claimShift({ shiftId, firstName: textValue(body.firstName), lastName: textValue(body.lastName), email: textValue(body.email), phone: textValue(body.phone), wantsSiteLead: body.wantsSiteLead === true, accessCode: textValue(body.accessCode) });
+      const email = normalizeEmail(textValue(body.email));
+      if (emailVerificationRequired() && !(await volunteerExists(email))) {
+        try {
+          const secret = verificationSecret();
+          const emailKey = keyedDigest('email-verification', email, secret);
+          const proof = readEmailProof(request.cookies.get(emailProofCookieName())?.value, emailKey, secret);
+          if (!proof) return reply({ ok: false, code: 'email_verification_required', message: 'Verify your email before saving this shift.' }, 403);
+        } catch {
+          console.error('security configuration unavailable');
+          return reply({ message: 'Service configuration is unavailable.' }, 503);
+        }
+      }
+      const result = await claimShift({ shiftId, firstName: textValue(body.firstName), lastName: textValue(body.lastName), email, phone: textValue(body.phone), wantsSiteLead: body.wantsSiteLead === true, accessCode: textValue(body.accessCode) });
       if (!result.ok) return reply(result, 409);
       const claimed = result.dashboard.shifts.find((shift) => shift.id === shiftId);
       const delivered = Boolean(claimed) && await attemptShiftConfirmation(async () => {

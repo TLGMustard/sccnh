@@ -1,4 +1,5 @@
 import { formatDay, formatTimeRange } from './domain.ts';
+import { sendEmail, type EmailConfig } from './email-provider.ts';
 
 export type ConfirmationMessage = {
   to: string;
@@ -14,11 +15,6 @@ type ConfirmationInput = {
   startsAt: string;
   endsAt: string;
   appBaseUrl: string;
-};
-
-type EmailConfig = {
-  apiKey: string;
-  from: string;
 };
 
 function escapeHtml(value: string): string {
@@ -37,16 +33,9 @@ export function buildShiftConfirmation(input: ConfirmationInput): ConfirmationMe
 
 export async function sendShiftConfirmation(
   message: ConfirmationMessage,
-  config: EmailConfig = { apiKey: process.env.RESEND_API_KEY ?? '', from: process.env.EMAIL_FROM ?? '' },
+  config?: EmailConfig,
 ): Promise<void> {
-  if (!config.apiKey || !config.from) throw new Error('Email delivery is not configured.');
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { authorization: `Bearer ${config.apiKey}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ from: config.from, to: [message.to], subject: message.subject, text: message.text, html: message.html }),
-    signal: AbortSignal.timeout(8_000),
-  });
-  if (!response.ok) throw new Error(`Email provider returned ${response.status}.`);
+  await sendEmail(message, config);
 }
 
 export async function attemptShiftConfirmation(send: () => Promise<void>): Promise<boolean> {

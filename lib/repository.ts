@@ -71,6 +71,12 @@ export async function getVolunteerDashboard(emailInput: string, codeInput: strin
   await ensureReferenceData(); const volunteer = await volunteerWithAccess(emailInput, codeInput); return volunteer ? dashboardFor(volunteer) : null;
 }
 
+export async function volunteerExists(emailInput: string): Promise<boolean> {
+  const email = normalizeEmail(emailInput);
+  if (!isValidEmail(email)) return false;
+  return Boolean((await query<{ id: string }>('SELECT id FROM volunteers WHERE email = ? LIMIT 1', [email]))[0]);
+}
+
 export async function claimShift(input: { shiftId: string; firstName: string; lastName: string; email: string; phone: string; wantsSiteLead: boolean; accessCode: string }): Promise<{ ok: true; dashboard: VolunteerDashboard } | { ok: false; message: string; code: string }> {
   await ensureReferenceData();
   const profile = normalizeSignupProfile(input); const accessCode = validateAccessCode(input.accessCode);
