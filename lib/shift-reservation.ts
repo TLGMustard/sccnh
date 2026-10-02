@@ -9,3 +9,9 @@ export function shiftChangeDecision(input: { sourceExists: boolean; sourceShiftI
   if (input.sourceShiftId === input.targetShiftId) return { ok: false, code: 'same_shift', message: 'Choose a different shift.' };
   return shiftReservationDecision({ exists: input.targetExists, isActive: input.targetIsActive, capacity: input.targetCapacity, filled: input.targetFilled });
 }
+
+export function capacityUpdateDecision(input: { exists: boolean; requested: number; filled: number }): { ok: true } | { ok: false; message: string } {
+  if (!input.exists) return { ok: false, message: 'Shift not found.' };
+  if (input.requested < input.filled) return { ok: false, message: 'Capacity cannot be below current signups.' };
+  return { ok: true };
+}

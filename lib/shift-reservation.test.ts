@@ -26,3 +26,13 @@ void test('keeps the current shift when a replacement is invalid or unavailable'
   assert.deepEqual(change({ sourceExists: true, sourceShiftId: 'current', targetShiftId: 'full', targetExists: true, targetIsActive: true, targetCapacity: 5, targetFilled: 5 }), { ok: false, code: 'full', message: 'That shift just filled.' });
   assert.deepEqual(change({ sourceExists: true, sourceShiftId: 'current', targetShiftId: 'open', targetExists: true, targetIsActive: true, targetCapacity: 5, targetFilled: 4 }), { ok: true });
 });
+
+void test('never lowers capacity below occupied places', () => {
+  const decide = (reservations as unknown as { capacityUpdateDecision?: (input: { exists: boolean; requested: number; filled: number }) => { ok: boolean; message?: string } }).capacityUpdateDecision;
+  assert.equal(typeof decide, 'function');
+  if (!decide) return;
+
+  assert.deepEqual(decide({ exists: false, requested: 10, filled: 0 }), { ok: false, message: 'Shift not found.' });
+  assert.deepEqual(decide({ exists: true, requested: 2, filled: 3 }), { ok: false, message: 'Capacity cannot be below current signups.' });
+  assert.deepEqual(decide({ exists: true, requested: 3, filled: 3 }), { ok: true });
+});

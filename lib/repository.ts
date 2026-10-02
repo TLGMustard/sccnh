@@ -4,7 +4,7 @@ import { availability, eventPhase, isValidEmail, normalizeEmail, type Availabili
 import { EVENT, LOCATIONS, SHIFTS, TASKS, type ShiftSeed } from './event';
 import { normalizeSignupProfile } from './signup-profile';
 import { checkInDecision } from './check-in';
-import { shiftChangeDecision, shiftReservationDecision } from './shift-reservation';
+import { capacityUpdateDecision, shiftChangeDecision, shiftReservationDecision } from './shift-reservation';
 import { volunteerRemovalDecision } from './admin-actions';
 import { emailVerificationRequired } from './email-verification';
 
@@ -83,28 +83,47 @@ export async function claimShift(input: { shiftId: string; firstName: string; la
   const profile = normalizeSignupProfile(input); const accessCode = validateAccessCode(input.accessCode);
   if (!profile.ok || !accessCode) return { ok: false, code: 'invalid_input', message: !profile.ok ? profile.message : 'Use an access code with at least 12 characters.' };
   const { firstName, lastName, email, phone, wantsSiteLead } = profile.value;
-  const shiftRows = await query<{ is_active: boolean; capacity: number; filled: number }>("SELECT s.is_active, s.capacity, (SELECT COUNT(*) FROM signups occupied WHERE occupied.shift_id = s.id AND occupied.status IN ('confirmed', 'checked_in')) AS filled FROM shifts s WHERE s.id = ? LIMIT 1", [input.shiftId]);
-  const shiftDecision = shiftReservationDecision({ exists: Boolean(shiftRows[0]), isActive: shiftRows[0]?.is_active ?? false, capacity: Number(shiftRows[0]?.capacity ?? 0), filled: Number(shiftRows[0]?.filled ?? 0) });
-  if (!shiftDecision.ok) return shiftDecision;
-  const existing = await query<VolunteerRow>('SELECT id, email, first_name, last_name, phone, wants_site_lead, access_code_hash FROM volunteers WHERE email = ? LIMIT 1', [email]);
-  let volunteer = existing[0];
-  if (!volunteer) {
-    const id = crypto.randomUUID();
-    await execute('INSERT INTO volunteers (id, email, first_name, last_name, phone, wants_site_lead, access_code_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [id, email, firstName, lastName, phone, wantsSiteLead, await hashAccessCode(accessCode), nowIso()]);
-    volunteer = { id, email, first_name: firstName, last_name: lastName, phone, wants_site_lead: wantsSiteLead, access_code_hash: '' };
-  } else if (!(await verifyAccessCode(accessCode, volunteer.access_code_hash))) return { ok: false, code: 'access_denied', message: 'We could not verify this signup.' };
-  else {
-    await execute("UPDATE volunteers SET phone = CASE WHEN phone = '' THEN ? ELSE phone END, wants_site_lead = wants_site_lead OR ? WHERE id = ?", [phone, wantsSiteLead, volunteer.id]);
-    if (!volunteer.phone) volunteer.phone = phone;
-    if (wantsSiteLead) volunteer.wants_site_lead = true;
-  }
-  if ((await query<{ status: SignupStatus }>("SELECT status FROM signups WHERE volunteer_id = ? AND shift_id = ? AND status IN ('confirmed', 'checked_in') LIMIT 1", [volunteer.id, input.shiftId])).length) return { ok: false, code: 'duplicate', message: 'You already have this shift.' };
-  const timestamp = nowIso();
-  const changed = await execute(`INSERT INTO signups (id, volunteer_id, shift_id, status, created_at, updated_at)
-    SELECT ?, ?, s.id, 'confirmed', ?, ? FROM shifts s WHERE s.id = ? AND s.is_active = true AND s.capacity > (SELECT COUNT(*) FROM signups existing WHERE existing.shift_id = s.id AND existing.status IN ('confirmed', 'checked_in'))
-    ON CONFLICT (volunteer_id, shift_id) DO UPDATE SET status = 'confirmed', updated_at = EXCLUDED.updated_at WHERE signups.status = 'cancelled'`, [crypto.randomUUID(), volunteer.id, timestamp, timestamp, input.shiftId]);
-  if (!changed) return { ok: false, code: 'full', message: 'That shift just filled.' };
-  return { ok: true, dashboard: await dashboardFor(volunteer) };
+  const observed = (await query<VolunteerRow>('SELECT id, email, first_name, last_name, phone, wants_site_lead, access_code_hash FROM volunteers WHERE email = ? LIMIT 1', [email]))[0];
+  if (observed && !(await verifyAccessCode(accessCode, observed.access_code_hash))) return { ok: false, code: 'access_denied', message: 'We could not verify this signup.' };
+  const preparedHash = observed ? null : await hashAccessCode(accessCode);
+
+  const result = await getDatabase().begin(async (sql) => {
+    // Serialize the unique email identity before reading it again. SELECT FOR UPDATE
+    // cannot lock a row that does not exist yet.
+    await sql.unsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`volunteer-email:${email}`]);
+    const shiftRows = await sql.unsafe<{ is_active: boolean; capacity: number; filled: number }[]>("SELECT s.is_active, s.capacity, (SELECT COUNT(*) FROM signups occupied WHERE occupied.shift_id = s.id AND occupied.status IN ('confirmed', 'checked_in')) AS filled FROM shifts s WHERE s.id = $1 FOR UPDATE", [input.shiftId]);
+    const shiftDecision = shiftReservationDecision({ exists: Boolean(shiftRows[0]), isActive: shiftRows[0]?.is_active ?? false, capacity: Number(shiftRows[0]?.capacity ?? 0), filled: Number(shiftRows[0]?.filled ?? 0) });
+    if (!shiftDecision.ok) return shiftDecision;
+
+    const existing = await sql.unsafe<VolunteerRow[]>('SELECT id, email, first_name, last_name, phone, wants_site_lead, access_code_hash FROM volunteers WHERE email = $1 LIMIT 1 FOR UPDATE', [email]);
+    let volunteer = existing[0];
+    if (!volunteer) {
+      if (!preparedHash) return { ok: false as const, code: 'access_denied', message: 'We could not verify this signup.' };
+      const id = crypto.randomUUID();
+      await sql.unsafe('INSERT INTO volunteers (id, email, first_name, last_name, phone, wants_site_lead, access_code_hash, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [id, email, firstName, lastName, phone, wantsSiteLead, preparedHash, nowIso()]);
+      volunteer = { id, email, first_name: firstName, last_name: lastName, phone, wants_site_lead: wantsSiteLead, access_code_hash: preparedHash };
+    } else {
+      if (!observed || observed.id !== volunteer.id) {
+        if (!(await verifyAccessCode(accessCode, volunteer.access_code_hash))) return { ok: false as const, code: 'access_denied', message: 'We could not verify this signup.' };
+      }
+      await sql.unsafe("UPDATE volunteers SET phone = CASE WHEN phone = '' THEN $1 ELSE phone END, wants_site_lead = wants_site_lead OR $2 WHERE id = $3", [phone, wantsSiteLead, volunteer.id]);
+      if (!volunteer.phone) volunteer.phone = phone;
+      if (wantsSiteLead) volunteer.wants_site_lead = true;
+    }
+
+    const duplicate = await sql.unsafe<{ status: SignupStatus }[]>("SELECT status FROM signups WHERE volunteer_id = $1 AND shift_id = $2 AND status IN ('confirmed', 'checked_in') LIMIT 1", [volunteer.id, input.shiftId]);
+    if (duplicate[0]) return { ok: false as const, code: 'duplicate', message: 'You already have this shift.' };
+
+    const timestamp = nowIso();
+    const changed = await sql.unsafe(`INSERT INTO signups (id, volunteer_id, shift_id, status, created_at, updated_at)
+      VALUES ($1, $2, $3, 'confirmed', $4, $4)
+      ON CONFLICT (volunteer_id, shift_id) DO UPDATE SET status = 'confirmed', updated_at = EXCLUDED.updated_at WHERE signups.status = 'cancelled'`, [crypto.randomUUID(), volunteer.id, input.shiftId, timestamp]);
+    if (!changed.count) return { ok: false as const, code: 'duplicate', message: 'You already have this shift.' };
+    return { ok: true as const, volunteer };
+  });
+
+  if (!result.ok) return result;
+  return { ok: true, dashboard: await dashboardFor(result.volunteer) };
 }
 
 export async function cancelSignup(signupId: string, emailInput: string, codeInput: string): Promise<{ ok: boolean; message: string }> {
@@ -181,9 +200,13 @@ export async function setTraining(input: { volunteerId: string; type: 'general' 
 export async function updateCapacity(shiftId: string, capacity: number): Promise<{ ok: boolean; message: string }> {
   await ensureReferenceData(); const next = Math.trunc(capacity);
   if (!Number.isFinite(next) || next < 0 || next > 500) return { ok: false, message: 'Capacity must be between 0 and 500.' };
-  const filled = await query<{ count: number }>("SELECT COUNT(*) AS count FROM signups WHERE shift_id = ? AND status IN ('confirmed', 'checked_in')", [shiftId]);
-  if (next < Number(filled[0]?.count ?? 0)) return { ok: false, message: 'Capacity cannot be below current signups.' };
-  return (await execute('UPDATE shifts SET capacity = ? WHERE id = ?', [next, shiftId])) ? { ok: true, message: 'Capacity updated.' } : { ok: false, message: 'Shift not found.' };
+  return getDatabase().begin(async (sql) => {
+    const rows = await sql.unsafe<{ id: string; filled: number }[]>("SELECT s.id, (SELECT COUNT(*) FROM signups occupied WHERE occupied.shift_id = s.id AND occupied.status IN ('confirmed', 'checked_in')) AS filled FROM shifts s WHERE s.id = $1 FOR UPDATE", [shiftId]);
+    const decision = capacityUpdateDecision({ exists: Boolean(rows[0]), requested: next, filled: Number(rows[0]?.filled ?? 0) });
+    if (!decision.ok) return decision;
+    await sql.unsafe('UPDATE shifts SET capacity = $1 WHERE id = $2', [next, shiftId]);
+    return { ok: true, message: 'Capacity updated.' };
+  });
 }
 
 export async function setCheckedIn(signupId: string, checkedIn: boolean): Promise<{ ok: boolean; message: string }> {
