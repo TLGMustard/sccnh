@@ -5,6 +5,8 @@ const P = 3;
 const DIGEST_BYTES = 32;
 const MAX_MEMORY = 128 * 1024 * 1024;
 
+export const DUMMY_ACCESS_CODE_HASH = `scrypt$${N}$${R}$${P}$${Buffer.alloc(16).toString('base64url')}$${Buffer.alloc(DIGEST_BYTES).toString('base64url')}`;
+
 export function validateAccessCode(value: string): string | null {
   const code = value.trim();
   return code.length >= 12 && code.length <= 128 ? code : null;
@@ -24,6 +26,11 @@ export async function verifyAccessCode(codeInput: string, encoded: string): Prom
   if (!code || !parsed) return false;
   const actual = await derive(code, parsed.salt);
   return actual.length === parsed.digest.length && timingSafeEqual(actual, parsed.digest);
+}
+
+export async function verifyStoredAccessCode(code: string, storedHash: string | null | undefined): Promise<boolean> {
+  const matched = await verifyAccessCode(code, storedHash || DUMMY_ACCESS_CODE_HASH);
+  return Boolean(storedHash) && matched;
 }
 
 async function derive(code: string, salt: Buffer): Promise<Buffer> {

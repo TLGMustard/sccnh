@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Check, RefreshCw, Search, ShieldCheck, UsersRound } from 'lucide-react';
+import { ArrowLeft, Check, LogOut, RefreshCw, Search, ShieldCheck, UsersRound } from 'lucide-react';
 import { formatDay, formatTimeRange } from '@/lib/domain';
 import type { AdminSnapshot, AdminSignup, AdminVolunteer, ShiftView } from '@/lib/repository';
 
@@ -63,12 +63,25 @@ export function OrganizerApp({ organizerName }: { organizerName: string }) {
     return true;
   }
 
+  async function signOut() {
+    setError(null);
+    try {
+      const response = await fetch('/api/admin/session', { method: 'DELETE' });
+      if (!response.ok) throw new Error('Sign out failed.');
+      setData(null);
+      setNeedsAccess(true);
+      setLoading(false);
+    } catch {
+      setError('Sign out failed. Try again.');
+    }
+  }
+
   return (
     <div className="min-h-screen bg-paper text-ink">
       <header className="border-b-2 border-ink bg-ink text-paper">
         <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-4 px-4 py-3 sm:px-7">
           <Link href="/" prefetch={false} className="flex items-center gap-2 text-sm font-bold uppercase tracking-[.1em]"><ArrowLeft className="size-4" /> Volunteer site</Link>
-          <div className="flex items-center gap-2 text-right"><ShieldCheck className="size-5 text-[#f06a43]" /><span className="text-xs font-bold uppercase tracking-[.1em]">{organizerName}</span></div>
+          <div className="flex items-center gap-3 text-right"><ShieldCheck className="size-5 text-[#f06a43]" /><span className="text-xs font-bold uppercase tracking-[.1em]">{organizerName}</span>{data && !needsAccess && <button type="button" onClick={() => void signOut()} className="flex items-center gap-1 border border-paper/60 px-2 py-1 text-xs font-bold uppercase tracking-[.08em] hover:bg-paper hover:text-ink"><LogOut className="size-3" /> Sign out</button>}</div>
         </div>
       </header>
       <main className="mx-auto max-w-[1440px] px-4 py-8 sm:px-7 sm:py-12">

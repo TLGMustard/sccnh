@@ -19,9 +19,6 @@ function reply(value: unknown, status = 200): NextResponse {
 }
 
 async function organizer() {
-  if (process.env.NODE_ENV === 'development') {
-    return { displayName: 'Local organizer', email: 'local@sccnh.test' };
-  }
   return (await isOrganizer()) ? { displayName: 'Organizer', email: '' } : null;
 }
 

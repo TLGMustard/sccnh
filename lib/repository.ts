@@ -1,5 +1,5 @@
 import { execute, getDatabase, query } from '@/db';
-import { hashAccessCode, validateAccessCode, verifyAccessCode } from './access-code';
+import { hashAccessCode, validateAccessCode, verifyAccessCode, verifyStoredAccessCode } from './access-code';
 import { availability, eventPhase, isValidEmail, normalizeEmail, type AvailabilityState, type EventPhase, type SignupStatus } from './domain';
 import { EVENT, LOCATIONS, SHIFTS, TASKS, type ShiftSeed } from './event';
 import { normalizeSignupProfile } from './signup-profile';
@@ -63,8 +63,8 @@ async function volunteerWithAccess(emailInput: string, codeInput: string): Promi
   const email = normalizeEmail(emailInput); const code = validateAccessCode(codeInput);
   if (!isValidEmail(email) || !code) return null;
   const rows = await query<VolunteerRow>('SELECT id, email, first_name, last_name, phone, wants_site_lead, access_code_hash FROM volunteers WHERE email = ? LIMIT 1', [email]);
-  if (!rows[0] || !(await verifyAccessCode(code, rows[0].access_code_hash))) return null;
-  return rows[0];
+  const verified = await verifyStoredAccessCode(code, rows[0]?.access_code_hash);
+  return verified ? rows[0] : null;
 }
 
 export async function getVolunteerDashboard(emailInput: string, codeInput: string): Promise<VolunteerDashboard | null> {
