@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminSession } from '@/lib/admin-session';
 import { adminCookieName } from '@/lib/admin-auth';
 import { verifyAccessCode } from '@/lib/access-code';
-import { createRateLimiter, isDeclaredJsonBodyTooLarge, parseJsonRequest, sensitiveResponseHeaders } from '@/lib/request-security';
+import { createRateLimiter, readJsonRequest, requireSameOrigin, sensitiveResponseHeaders } from '@/lib/request-security';
+import { getApplicationOrigin } from '@/lib/app-config';
 
 const signInAttempts = createRateLimiter(8, 60_000);
 
@@ -11,8 +12,15 @@ function requestKey(request: NextRequest): string {
 }
 
 export async function POST(request: NextRequest) {
-  if (isDeclaredJsonBodyTooLarge(request.headers.get('content-length'))) return NextResponse.json({ message: 'Invalid request.' }, { status: 413, headers: sensitiveResponseHeaders });
-  const parsed = parseJsonRequest(request.headers.get('content-type'), await request.text());
+  let appOrigin: string;
+  try {
+    appOrigin = getApplicationOrigin(request.nextUrl.origin);
+  } catch (error) {
+    console.error('security configuration unavailable', error instanceof Error ? error.message : 'Invalid application origin');
+    return NextResponse.json({ message: 'Service configuration is unavailable.' }, { status: 503, headers: sensitiveResponseHeaders });
+  }
+  if (!requireSameOrigin(request, appOrigin)) return NextResponse.json({ message: 'Invalid request.' }, { status: 403, headers: sensitiveResponseHeaders });
+  const parsed = await readJsonRequest(request);
   if (!parsed.ok) return NextResponse.json({ message: 'Invalid request.' }, { status: parsed.status, headers: sensitiveResponseHeaders });
   if (!signInAttempts.allow(requestKey(request))) return NextResponse.json({ message: 'Please wait before trying again.' }, { status: 429, headers: sensitiveResponseHeaders });
   const code = typeof parsed.value.accessCode === 'string' ? parsed.value.accessCode : '';

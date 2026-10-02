@@ -8,6 +8,17 @@ export type SignupProfile = {
   wantsSiteLead: boolean;
 };
 
+const NAME_MAX = 80;
+const EMAIL_MAX_BYTES = 254;
+const PHONE_MAX = 32;
+const PHONE_DIGITS_MIN = 7;
+const PHONE_DIGITS_MAX = 15;
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
+
+export function boundedIdentifier(value: unknown): string | null {
+  return typeof value === 'string' && value.length >= 1 && value.length <= 128 && /^[A-Za-z0-9:_-]+$/.test(value) ? value : null;
+}
+
 export function normalizeSignupProfile(input: {
   firstName: string;
   lastName: string;
@@ -22,7 +33,14 @@ export function normalizeSignupProfile(input: {
     phone: input.phone.trim(),
     wantsSiteLead: input.wantsSiteLead === true,
   };
-  if (!value.firstName || !value.lastName || !isValidEmail(value.email) || value.phone.replace(/\D/g, '').length < 7) {
+  const phoneDigits = value.phone.replace(/\D/g, '').length;
+  if (
+    !value.firstName || value.firstName.length > NAME_MAX || CONTROL_CHARACTERS.test(value.firstName) ||
+    !value.lastName || value.lastName.length > NAME_MAX || CONTROL_CHARACTERS.test(value.lastName) ||
+    !isValidEmail(value.email) || new TextEncoder().encode(value.email).byteLength > EMAIL_MAX_BYTES ||
+    !value.phone || value.phone.length > PHONE_MAX || CONTROL_CHARACTERS.test(value.phone) ||
+    phoneDigits < PHONE_DIGITS_MIN || phoneDigits > PHONE_DIGITS_MAX
+  ) {
     return { ok: false, message: 'Enter your name, email, and phone number.' };
   }
   return { ok: true, value };

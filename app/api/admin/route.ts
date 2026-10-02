@@ -8,13 +8,11 @@ import {
   setTraining,
   updateCapacity,
 } from '@/lib/repository';
-import { isDeclaredJsonBodyTooLarge, parseJsonRequest, sensitiveResponseHeaders } from '@/lib/request-security';
+import { readJsonRequest, requireSameOrigin, sensitiveResponseHeaders } from '@/lib/request-security';
+import { getApplicationOrigin } from '@/lib/app-config';
+import { boundedIdentifier } from '@/lib/signup-profile';
 
 export const dynamic = 'force-dynamic';
-
-function textValue(value: unknown): string {
-  return typeof value === 'string' ? value : '';
-}
 
 function reply(value: unknown, status = 200): NextResponse {
   return NextResponse.json(value, { status, headers: sensitiveResponseHeaders });
@@ -41,27 +39,34 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   const user = await organizer();
   if (!user) return reply({ message: 'Organizer sign-in required.' }, 401);
-  if (isDeclaredJsonBodyTooLarge(request.headers.get('content-length'))) return reply({ message: 'Invalid request.' }, 413);
-  const parsed = parseJsonRequest(request.headers.get('content-type'), await request.text());
+  let appOrigin: string;
+  try {
+    appOrigin = getApplicationOrigin(request.nextUrl.origin);
+  } catch (error) {
+    console.error('security configuration unavailable', error instanceof Error ? error.message : 'Invalid application origin');
+    return reply({ message: 'Service configuration is unavailable.' }, 503);
+  }
+  if (!requireSameOrigin(request, appOrigin)) return reply({ message: 'Invalid request.' }, 403);
+  const parsed = await readJsonRequest(request);
   if (!parsed.ok) return reply({ message: 'Invalid request.' }, parsed.status);
   try {
     const body = parsed.value;
     let result: { ok: boolean; message: string };
     if (body.action === 'training') {
       result = await setTraining({
-        volunteerId: textValue(body.volunteerId),
+        volunteerId: boundedIdentifier(body.volunteerId) ?? '',
         type: 'general',
         complete: Boolean(body.complete),
         completedBy: user.displayName,
       });
     } else if (body.action === 'capacity') {
-      result = await updateCapacity(textValue(body.shiftId), Number(body.capacity));
+      result = await updateCapacity(boundedIdentifier(body.shiftId) ?? '', Number(body.capacity));
     } else if (body.action === 'checkin') {
-      result = await setCheckedIn(textValue(body.signupId), Boolean(body.checkedIn));
+      result = await setCheckedIn(boundedIdentifier(body.signupId) ?? '', Boolean(body.checkedIn));
     } else if (body.action === 'cancel-signups') {
-      result = await cancelVolunteerSignups(textValue(body.volunteerId));
+      result = await cancelVolunteerSignups(boundedIdentifier(body.volunteerId) ?? '');
     } else if (body.action === 'delete-volunteer') {
-      result = await deleteVolunteer(textValue(body.volunteerId));
+      result = await deleteVolunteer(boundedIdentifier(body.volunteerId) ?? '');
     } else {
       return reply({ message: 'Invalid request.' }, 400);
     }

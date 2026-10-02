@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cancelSignup, changeSignup, claimShift, getPublicSnapshot, getVolunteerDashboard } from '@/lib/repository';
 import { attemptShiftConfirmation, buildShiftConfirmation, sendShiftConfirmation } from '@/lib/confirmation-email';
-import { createRateLimiter, isDeclaredJsonBodyTooLarge, parseJsonRequest, sensitiveResponseHeaders } from '@/lib/request-security';
+import { createRateLimiter, readJsonRequest, requireSameOrigin, sensitiveResponseHeaders } from '@/lib/request-security';
+import { getApplicationOrigin } from '@/lib/app-config';
+import { boundedIdentifier } from '@/lib/signup-profile';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,8 +25,15 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  if (isDeclaredJsonBodyTooLarge(request.headers.get('content-length'))) return reply({ message: 'Invalid request.' }, 413);
-  const parsed = parseJsonRequest(request.headers.get('content-type'), await request.text());
+  let appOrigin: string;
+  try {
+    appOrigin = getApplicationOrigin(request.nextUrl.origin);
+  } catch (error) {
+    console.error('security configuration unavailable', error instanceof Error ? error.message : 'Invalid application origin');
+    return reply({ message: 'Service configuration is unavailable.' }, 503);
+  }
+  if (!requireSameOrigin(request, appOrigin)) return reply({ message: 'Invalid request.' }, 403);
+  const parsed = await readJsonRequest(request);
   if (!parsed.ok) return reply({ message: 'Invalid request.' }, parsed.status);
   try {
     const body = parsed.value;
@@ -32,9 +41,10 @@ export async function POST(request: NextRequest) {
       return reply({ message: 'Please wait before trying again.' }, 429);
     }
     if (body.action === 'claim') {
-      const result = await claimShift({ shiftId: textValue(body.shiftId), firstName: textValue(body.firstName), lastName: textValue(body.lastName), email: textValue(body.email), phone: textValue(body.phone), wantsSiteLead: body.wantsSiteLead === true, accessCode: textValue(body.accessCode) });
+      const shiftId = boundedIdentifier(body.shiftId) ?? '';
+      const result = await claimShift({ shiftId, firstName: textValue(body.firstName), lastName: textValue(body.lastName), email: textValue(body.email), phone: textValue(body.phone), wantsSiteLead: body.wantsSiteLead === true, accessCode: textValue(body.accessCode) });
       if (!result.ok) return reply(result, 409);
-      const claimed = result.dashboard.shifts.find((shift) => shift.id === body.shiftId);
+      const claimed = result.dashboard.shifts.find((shift) => shift.id === shiftId);
       const delivered = Boolean(claimed) && await attemptShiftConfirmation(async () => {
         const message = buildShiftConfirmation({
           to: result.dashboard.volunteer.email,
@@ -42,7 +52,7 @@ export async function POST(request: NextRequest) {
           location: claimed!.location.name,
           startsAt: claimed!.startsAt,
           endsAt: claimed!.endsAt,
-          appBaseUrl: process.env.APP_BASE_URL || request.nextUrl.origin,
+          appBaseUrl: appOrigin,
         });
         await sendShiftConfirmation(message);
       });
@@ -53,11 +63,11 @@ export async function POST(request: NextRequest) {
       return dashboard ? reply({ dashboard }) : reply({ message: 'No matching volunteer record.' }, 404);
     }
     if (body.action === 'cancel') {
-      const result = await cancelSignup(textValue(body.signupId), textValue(body.email), textValue(body.accessCode));
+      const result = await cancelSignup(boundedIdentifier(body.signupId) ?? '', textValue(body.email), textValue(body.accessCode));
       return reply(result, result.ok ? 200 : 404);
     }
     if (body.action === 'change') {
-      const result = await changeSignup({ signupId: textValue(body.signupId), targetShiftId: textValue(body.targetShiftId), email: textValue(body.email), accessCode: textValue(body.accessCode) });
+      const result = await changeSignup({ signupId: boundedIdentifier(body.signupId) ?? '', targetShiftId: boundedIdentifier(body.targetShiftId) ?? '', email: textValue(body.email), accessCode: textValue(body.accessCode) });
       return reply(result, result.ok ? 200 : 409);
     }
     return reply({ message: 'Invalid request.' }, 400);
