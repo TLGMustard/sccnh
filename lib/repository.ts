@@ -6,9 +6,10 @@ import { normalizeSignupProfile } from './signup-profile';
 import { checkInDecision } from './check-in';
 import { shiftChangeDecision, shiftReservationDecision } from './shift-reservation';
 import { volunteerRemovalDecision } from './admin-actions';
+import { emailVerificationRequired } from './email-verification';
 
 export type ShiftView = ShiftSeed & { location: (typeof LOCATIONS)[number]; task: (typeof TASKS)[number]; filled: number; remaining: number; state: AvailabilityState };
-export type PublicSnapshot = { event: typeof EVENT; essentials: string[]; phase: EventPhase; shifts: ShiftView[] };
+export type PublicSnapshot = { event: typeof EVENT; essentials: string[]; phase: EventPhase; emailVerificationRequired: boolean; shifts: ShiftView[] };
 export type VolunteerShift = ShiftView & { signupId: string; status: SignupStatus };
 export type VolunteerDashboard = { volunteer: { id: string; email: string; firstName: string; lastName: string; phone: string; wantsSiteLead: boolean }; trainings: { general: boolean; lead: boolean }; shifts: VolunteerShift[] };
 export type AdminVolunteer = VolunteerDashboard['volunteer'] & { shiftCount: number; trainings: { general: boolean; lead: boolean } };
@@ -47,7 +48,7 @@ async function listShiftViews(): Promise<ShiftView[]> {
   return (await query<ShiftRow>(`${SHIFT_SELECT} WHERE s.is_active = true GROUP BY s.id, l.id, t.id ORDER BY s.starts_at, l.name, s.title`)).map(mapShift);
 }
 
-export async function getPublicSnapshot(): Promise<PublicSnapshot> { return { event: EVENT, essentials: EVENT.essentials, phase: eventPhase(), shifts: await listShiftViews() }; }
+export async function getPublicSnapshot(): Promise<PublicSnapshot> { return { event: EVENT, essentials: EVENT.essentials, phase: eventPhase(), emailVerificationRequired: emailVerificationRequired(), shifts: await listShiftViews() }; }
 
 async function dashboardFor(volunteer: VolunteerRow): Promise<VolunteerDashboard> {
   const [trainingRows, signupRows, signupMeta] = await Promise.all([

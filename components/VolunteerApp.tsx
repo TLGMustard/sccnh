@@ -1,12 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 import Link from 'next/link';
 import { MapPin, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { formatTime, formatTimeRange } from '@/lib/domain';
 import type { PublicSnapshot, ShiftView, VolunteerDashboard } from '@/lib/repository';
+import { initialVerificationState, signupNextStep, verificationReducer } from '@/lib/signup-verification-state';
 
 type View = 'signup' | 'mine';
 type Contact = { firstName: string; lastName: string; email: string; phone: string; accessCode: string; wantsSiteLead: boolean };
@@ -34,6 +35,13 @@ export function VolunteerApp({ initial }: { initial: PublicSnapshot }) {
   const [dashboard, setDashboard] = useState<VolunteerDashboard | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [verification, dispatchVerification] = useReducer(verificationReducer, initialVerificationState);
+  const [verificationCode, setVerificationCode] = useState('');
+
+  function updateContact(next: Contact) {
+    if (next.email !== contact.email) dispatchVerification({ type: 'email-changed', email: next.email });
+    setContact(next);
+  }
 
   const refresh = useCallback(async () => {
     const response = await fetch('/api/site', { cache: 'no-store' });
@@ -56,19 +64,65 @@ export function VolunteerApp({ initial }: { initial: PublicSnapshot }) {
 
   async function send(body: Record<string, unknown>) {
     const response = await fetch('/api/site', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    const result = await response.json() as { ok?: boolean; message?: string; dashboard?: VolunteerDashboard; receipt?: 'sent' | 'failed' };
+    const result = await response.json() as { ok?: boolean; code?: string; message?: string; dashboard?: VolunteerDashboard; receipt?: 'sent' | 'failed' };
     return { response, result };
+  }
+
+  async function requestVerificationCode() {
+    const response = await fetch('/api/verification', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'request', email: contact.email }) });
+    const result = await response.json() as { ok?: boolean; message?: string };
+    if (!response.ok || !result.ok) throw new Error(result.message ?? 'We could not send a verification code.');
+    dispatchVerification({ type: 'code-requested', email: contact.email });
+    setVerificationCode('');
+    setMessage(result.message ?? 'Check your email for a verification code.');
+  }
+
+  async function saveClaim() {
+    if (!selected) return;
+    setPending(true); setMessage(null);
+    try {
+      const { response, result } = await send({ action: 'claim', shiftId: selected.id, ...contact });
+      if (result.code === 'email_verification_required' && snapshot.emailVerificationRequired) {
+        await requestVerificationCode();
+      } else if (!response.ok || !result.ok || !result.dashboard) {
+        setMessage(result.message ?? 'We could not save that shift.');
+      } else {
+        setDashboard(result.dashboard);
+        setMessage(result.receipt === 'sent' ? 'Shift saved. Check your email for confirmation.' : 'Shift saved. We could not send the email receipt.');
+        dispatchVerification({ type: 'reset' });
+        setVerificationCode('');
+        await refresh();
+      }
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'We could not save that shift.'); }
+    finally { setPending(false); }
   }
 
   async function claim(event: React.SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selected || pending) return;
+    if (pending || signupNextStep(snapshot.emailVerificationRequired, verification, contact.email) === 'confirm') return;
+    await saveClaim();
+  }
+
+  async function confirmVerification(event: React.SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (pending || !/^\d{6}$/.test(verificationCode)) return;
     setPending(true); setMessage(null);
     try {
-      const { response, result } = await send({ action: 'claim', shiftId: selected.id, ...contact });
-      if (!response.ok || !result.ok || !result.dashboard) setMessage(result.message ?? 'We could not save that shift.');
-      else { setDashboard(result.dashboard); setMessage(result.receipt === 'sent' ? 'Shift saved. Check your email for confirmation.' : 'Shift saved. We could not send the email receipt.'); await refresh(); }
-    } catch { setMessage('We could not save that shift.'); }
+      const response = await fetch('/api/verification', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'confirm', email: contact.email, code: verificationCode }) });
+      const result = await response.json() as { ok?: boolean; message?: string };
+      if (!response.ok || !result.ok) { setMessage(result.message ?? 'We could not verify that code.'); return; }
+      dispatchVerification({ type: 'confirmed', email: contact.email });
+      setVerificationCode('');
+    } catch { setMessage('We could not verify that code.'); return; }
+    finally { setPending(false); }
+    await saveClaim();
+  }
+
+  async function resendVerificationCode() {
+    if (pending) return;
+    setPending(true); setMessage(null);
+    try { await requestVerificationCode(); }
+    catch (error) { setMessage(error instanceof Error ? error.message : 'We could not send a verification code.'); }
     finally { setPending(false); }
   }
 
@@ -159,10 +213,10 @@ export function VolunteerApp({ initial }: { initial: PublicSnapshot }) {
             <div className="mt-6 space-y-4">{groups.map((shifts) => <LocationBlock key={shifts[0].locationId} shifts={shifts} onSelect={(shift) => { setSelected(shift); setMessage(null); }} />)}</div>
           </section>
         </main>
-      ) : <MyShifts contact={contact} setContact={setContact} dashboard={dashboard} message={message} pending={pending} onLookup={lookup} onCancel={cancel} onChange={(signupId) => { setChangingSignupId(signupId); setMessage(null); setView('signup'); }} onBrowse={() => setView('signup')} />}
+      ) : <MyShifts contact={contact} setContact={updateContact} dashboard={dashboard} message={message} pending={pending} onLookup={lookup} onCancel={cancel} onChange={(signupId) => { setChangingSignupId(signupId); setMessage(null); setView('signup'); }} onBrowse={() => setView('signup')} />}
 
       <footer className="border-t-2 border-blue bg-blue text-paper"><div className="mx-auto max-w-6xl px-4 py-5 text-sm sm:px-7">UF Hillel · SCCNH 2027</div></footer>
-      <ShiftSheet shift={selected} contact={contact} setContact={setContact} pending={pending} message={message} changing={Boolean(changingSignupId)} onClaim={claim} onChange={change} onClose={() => setSelected(null)} onMine={() => { setSelected(null); setView('mine'); }} />
+      <ShiftSheet shift={selected} contact={contact} setContact={updateContact} pending={pending} message={message} changing={Boolean(changingSignupId)} verificationStep={signupNextStep(snapshot.emailVerificationRequired, verification, contact.email)} verificationCode={verificationCode} setVerificationCode={setVerificationCode} onClaim={claim} onConfirm={confirmVerification} onResend={() => void resendVerificationCode()} onBack={() => { dispatchVerification({ type: 'reset' }); setVerificationCode(''); setMessage(null); }} onChange={change} onClose={() => setSelected(null)} onMine={() => { setSelected(null); setView('mine'); }} />
     </div>
   );
 }
@@ -176,11 +230,76 @@ function Field({ label, value, onChange, type = 'text', required = false }: { la
   return <label className="block"><span className="eyebrow block text-orange">{label}</span><input type={type} value={value} onChange={(event) => onChange(event.target.value)} required={required} className="field-input" /></label>;
 }
 
-function ShiftSheet({ shift, contact, setContact, pending, message, changing, onClaim, onChange, onClose, onMine }: { shift: ShiftView | null; contact: Contact; setContact: (contact: Contact) => void; pending: boolean; message: string | null; changing: boolean; onClaim: (event: React.SyntheticEvent<HTMLFormElement>) => void; onChange: (event: React.SyntheticEvent<HTMLFormElement>) => void; onClose: () => void; onMine: () => void }) {
+function ShiftSheet({
+  shift,
+  contact,
+  setContact,
+  pending,
+  message,
+  changing,
+  verificationStep,
+  verificationCode,
+  setVerificationCode,
+  onClaim,
+  onConfirm,
+  onResend,
+  onBack,
+  onChange,
+  onClose,
+  onMine,
+}: {
+  shift: ShiftView | null;
+  contact: Contact;
+  setContact: (contact: Contact) => void;
+  pending: boolean;
+  message: string | null;
+  changing: boolean;
+  verificationStep: 'claim' | 'confirm';
+  verificationCode: string;
+  setVerificationCode: (code: string) => void;
+  onClaim: (event: React.SyntheticEvent<HTMLFormElement>) => void;
+  onConfirm: (event: React.SyntheticEvent<HTMLFormElement>) => void;
+  onResend: () => void;
+  onBack: () => void;
+  onChange: (event: React.SyntheticEvent<HTMLFormElement>) => void;
+  onClose: () => void;
+  onMine: () => void;
+}) {
+  const confirming = !changing && verificationStep === 'confirm';
+
   return <Sheet open={Boolean(shift)} onOpenChange={(open) => { if (!open) onClose(); }}>
     <SheetContent side="right" className="w-full max-w-xl gap-0 overflow-y-auto border-l-2 border-blue bg-paper p-0">
       {shift && <><SheetHeader className="border-b-2 border-blue bg-paper-deep p-5 pr-14 sm:p-7"><div className="eyebrow text-orange">{formatTimeRange(shift.startsAt, shift.endsAt)}</div><SheetTitle className="mt-2 font-display text-4xl font-black leading-[.9]">{shift.location.name}</SheetTitle><SheetDescription className="mt-2 text-base font-semibold text-orange">{shift.task.name}</SheetDescription></SheetHeader>
-        <form onSubmit={changing ? onChange : onClaim} className="p-5 sm:p-7">{changing ? <p className="text-sm">This replacement uses the email and access code from My shifts. Your current shift is kept unless this new slot is saved.</p> : <><div className="grid grid-cols-2 gap-3"><Field label="First name" value={contact.firstName} onChange={(value) => setContact({ ...contact, firstName: value })} required /><Field label="Last name" value={contact.lastName} onChange={(value) => setContact({ ...contact, lastName: value })} required /><div className="col-span-2"><Field label="Email" type="email" value={contact.email} onChange={(value) => setContact({ ...contact, email: value })} required /></div><div className="col-span-2"><Field label="Phone" type="tel" value={contact.phone} onChange={(value) => setContact({ ...contact, phone: value })} required /></div><div className="col-span-2"><Field label="Access code" type="password" value={contact.accessCode} onChange={(value) => setContact({ ...contact, accessCode: value })} required /></div><div className="lead-choice col-span-2"><input id="site-lead-interest" type="checkbox" checked={contact.wantsSiteLead} onChange={(event) => setContact({ ...contact, wantsSiteLead: event.target.checked })} /><label htmlFor="site-lead-interest"><strong>Interested in being a site lead</strong><small>The VC of Ops will contact selected leads.</small></label></div></div><p className="mt-3 text-sm">Training is 1.5 hours. Bring your SCCNH shirt. Event shirts are provided at training. Use your access code to view or cancel shifts.</p></>}{message && <p role="alert" className="mt-3 border border-orange bg-orange-wash p-3 text-sm">{message}</p>}<Button type="submit" disabled={pending || shift.remaining === 0} className="mt-4 h-12 w-full rounded-none bg-orange font-bold text-paper hover:bg-orange-dark">{shift.remaining === 0 ? 'Full' : pending ? 'Saving' : changing ? 'Change shift' : 'Save shift'}</Button>{!changing && message?.startsWith('Shift saved.') && <Button type="button" onClick={onMine} className="mt-3 h-11 w-full rounded-none border-2 border-blue bg-paper text-blue hover:bg-paper-deep">My shifts</Button>}</form></>}
+        <form onSubmit={changing ? onChange : confirming ? onConfirm : onClaim} className="p-5 sm:p-7">
+          {changing ? <p className="text-sm">This replacement uses the email and access code from My shifts. Your current shift is kept unless this new slot is saved.</p> : confirming ? <div>
+            <div className="eyebrow text-orange">Verify your email</div>
+            <p className="mt-2 text-sm">Enter the six-digit code sent to <strong>{contact.email}</strong>.</p>
+            <label className="mt-5 block">
+              <span className="eyebrow block text-orange">Verification code</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                autoFocus
+                maxLength={6}
+                pattern="[0-9]{6}"
+                value={verificationCode}
+                onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                required
+                className="field-input text-center font-display text-3xl tracking-[.3em]"
+                aria-describedby="verification-help"
+              />
+              <span id="verification-help" className="mt-2 block text-xs">Codes expire after ten minutes.</span>
+            </label>
+          </div> : <>
+            <div className="grid grid-cols-2 gap-3"><Field label="First name" value={contact.firstName} onChange={(value) => setContact({ ...contact, firstName: value })} required /><Field label="Last name" value={contact.lastName} onChange={(value) => setContact({ ...contact, lastName: value })} required /><div className="col-span-2"><Field label="Email" type="email" value={contact.email} onChange={(value) => setContact({ ...contact, email: value })} required /></div><div className="col-span-2"><Field label="Phone" type="tel" value={contact.phone} onChange={(value) => setContact({ ...contact, phone: value })} required /></div><div className="col-span-2"><Field label="Access code" type="password" value={contact.accessCode} onChange={(value) => setContact({ ...contact, accessCode: value })} required /></div><div className="lead-choice col-span-2"><input id="site-lead-interest" type="checkbox" checked={contact.wantsSiteLead} onChange={(event) => setContact({ ...contact, wantsSiteLead: event.target.checked })} /><label htmlFor="site-lead-interest"><strong>Interested in being a site lead</strong><small>The VC of Ops will contact selected leads.</small></label></div></div>
+            <p className="mt-3 text-sm">Training is 1.5 hours. Bring your SCCNH shirt. Event shirts are provided at training. Use your access code to view or cancel shifts.</p>
+          </>}
+          {message && <p role="alert" className="mt-3 border border-orange bg-orange-wash p-3 text-sm">{message}</p>}
+          <Button type="submit" disabled={pending || shift.remaining === 0 || (confirming && verificationCode.length !== 6)} className="mt-4 h-12 w-full rounded-none bg-orange font-bold text-paper hover:bg-orange-dark">{shift.remaining === 0 ? 'Full' : pending ? confirming ? 'Checking' : 'Saving' : changing ? 'Change shift' : confirming ? 'Verify email' : 'Save shift'}</Button>
+          {confirming && <div className="mt-3 grid grid-cols-2 gap-3"><Button type="button" onClick={onResend} disabled={pending} className="h-11 rounded-none border-2 border-blue bg-paper px-2 text-blue hover:bg-paper-deep">Send another code</Button><Button type="button" onClick={onBack} disabled={pending} className="h-11 rounded-none border-2 border-blue bg-paper text-blue hover:bg-paper-deep">Back</Button></div>}
+          {!changing && message?.startsWith('Shift saved.') && <Button type="button" onClick={onMine} className="mt-3 h-11 w-full rounded-none border-2 border-blue bg-paper text-blue hover:bg-paper-deep">My shifts</Button>}
+        </form></>}
     </SheetContent>
   </Sheet>;
 }
