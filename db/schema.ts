@@ -1,4 +1,4 @@
-import { boolean, index, integer, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
+import { bigint, boolean, index, integer, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
 
 export const events = pgTable('events', {
   id: text('id').primaryKey(), name: text('name').notNull(), tagline: text('tagline').notNull(), overview: text('overview').notNull(), startDate: text('start_date').notNull(), endDate: text('end_date').notNull(),
@@ -22,3 +22,29 @@ export const trainings = pgTable('trainings', {
   id: text('id').primaryKey(), volunteerId: text('volunteer_id').notNull().references(() => volunteers.id), type: text('type').notNull(), completedAt: text('completed_at').notNull(), completedBy: text('completed_by').notNull(),
 }, (table) => [uniqueIndex('uq_trainings_volunteer_type').on(table.volunteerId, table.type)]);
 export const seedVersions = pgTable('seed_versions', { version: text('version').primaryKey(), appliedAt: text('applied_at').notNull() });
+
+export const emailVerifications = pgTable('email_verifications', {
+  id: text('id').primaryKey(),
+  emailKey: text('email_key').notNull(),
+  codeDigest: text('code_digest').notNull(),
+  expiresAt: bigint('expires_at', { mode: 'number' }).notNull(),
+  attempts: integer('attempts').notNull().default(0),
+  consumedAt: bigint('consumed_at', { mode: 'number' }),
+  createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+}, (table) => [index('idx_email_verifications_key_created').on(table.emailKey, table.createdAt)]);
+
+export const securityRateLimits = pgTable('security_rate_limits', {
+  bucketKey: text('bucket_key').primaryKey(),
+  count: integer('count').notNull(),
+  expiresAt: bigint('expires_at', { mode: 'number' }).notNull(),
+}, (table) => [index('idx_security_rate_limits_expiry').on(table.expiresAt)]);
+
+export const adminAuditLog = pgTable('admin_audit_log', {
+  id: text('id').primaryKey(),
+  action: text('action').notNull(),
+  targetType: text('target_type').notNull(),
+  targetId: text('target_id').notNull(),
+  actorKey: text('actor_key').notNull(),
+  outcome: text('outcome').notNull(),
+  createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+});
