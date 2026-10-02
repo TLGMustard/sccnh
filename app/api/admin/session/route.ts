@@ -2,14 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomBytes } from 'node:crypto';
 import { adminCookieName, createAdminSession } from '@/lib/admin-session';
 import { verifyStoredAccessCode } from '@/lib/access-code';
-import { createRateLimiter, readJsonRequest, requireSameOrigin, sensitiveResponseHeaders } from '@/lib/request-security';
+import { readJsonRequest, requireSameOrigin, sensitiveResponseHeaders } from '@/lib/request-security';
 import { getApplicationOrigin } from '@/lib/app-config';
-
-const signInAttempts = createRateLimiter(8, 60_000);
-
-function requestKey(request: NextRequest): string {
-  return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
-}
+import { consumeRateLimit } from '@/lib/rate-limit';
+import { requestNetworkIdentity } from '@/lib/security-key';
 
 export async function POST(request: NextRequest) {
   let appOrigin: string;
@@ -22,7 +18,16 @@ export async function POST(request: NextRequest) {
   if (!requireSameOrigin(request, appOrigin)) return NextResponse.json({ message: 'Invalid request.' }, { status: 403, headers: sensitiveResponseHeaders });
   const parsed = await readJsonRequest(request);
   if (!parsed.ok) return NextResponse.json({ message: 'Invalid request.' }, { status: parsed.status, headers: sensitiveResponseHeaders });
-  if (!signInAttempts.allow(requestKey(request))) return NextResponse.json({ message: 'Please wait before trying again.' }, { status: 429, headers: sensitiveResponseHeaders });
+  try {
+    const [network, global] = await Promise.all([
+      consumeRateLimit({ scope: 'admin-login-network', limit: 8, windowMs: 15 * 60_000 }, requestNetworkIdentity(request)),
+      consumeRateLimit({ scope: 'admin-login-global', limit: 60, windowMs: 15 * 60_000 }, 'organizer-login'),
+    ]);
+    if (!network.allowed || !global.allowed) return NextResponse.json({ message: 'Please wait before trying again.' }, { status: 429, headers: sensitiveResponseHeaders });
+  } catch {
+    console.error('security configuration unavailable');
+    return NextResponse.json({ message: 'Service configuration is unavailable.' }, { status: 503, headers: sensitiveResponseHeaders });
+  }
   const code = typeof parsed.value.accessCode === 'string' ? parsed.value.accessCode : '';
   const hash = process.env.ADMIN_ACCESS_CODE_HASH ?? '';
   const secret = process.env.ADMIN_SESSION_SECRET ?? '';

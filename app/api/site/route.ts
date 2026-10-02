@@ -1,19 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cancelSignup, changeSignup, claimShift, getPublicSnapshot, getVolunteerDashboard } from '@/lib/repository';
 import { attemptShiftConfirmation, buildShiftConfirmation, sendShiftConfirmation } from '@/lib/confirmation-email';
-import { createRateLimiter, readJsonRequest, requireSameOrigin, sensitiveResponseHeaders } from '@/lib/request-security';
+import { readJsonRequest, requireSameOrigin, sensitiveResponseHeaders } from '@/lib/request-security';
 import { getApplicationOrigin } from '@/lib/app-config';
 import { boundedIdentifier } from '@/lib/signup-profile';
+import { normalizeEmail } from '@/lib/domain';
+import { consumeRateLimit, type RateLimitPolicy } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
 function textValue(value: unknown): string { return typeof value === 'string' ? value : ''; }
 function reply(value: unknown, status = 200): NextResponse { return NextResponse.json(value, { status, headers: sensitiveResponseHeaders }); }
-const accessAttempts = createRateLimiter(8, 60_000);
-
-function requestKey(request: NextRequest): string {
-  return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
-}
+const volunteerPolicies: Record<string, RateLimitPolicy> = {
+  claim: { scope: 'claim', limit: 12, windowMs: 15 * 60_000 },
+  mine: { scope: 'mine', limit: 8, windowMs: 15 * 60_000 },
+  cancel: { scope: 'cancel', limit: 8, windowMs: 15 * 60_000 },
+  change: { scope: 'change', limit: 8, windowMs: 15 * 60_000 },
+};
 
 export async function GET() {
   try {
@@ -37,8 +40,16 @@ export async function POST(request: NextRequest) {
   if (!parsed.ok) return reply({ message: 'Invalid request.' }, parsed.status);
   try {
     const body = parsed.value;
-    if ((body.action === 'claim' || body.action === 'mine' || body.action === 'cancel' || body.action === 'change') && !accessAttempts.allow(requestKey(request))) {
-      return reply({ message: 'Please wait before trying again.' }, 429);
+    const action = typeof body.action === 'string' ? body.action : '';
+    const policy = volunteerPolicies[action];
+    if (policy) {
+      try {
+        const limit = await consumeRateLimit(policy, normalizeEmail(textValue(body.email)) || 'invalid-email');
+        if (!limit.allowed) return reply({ message: 'Please wait before trying again.' }, 429);
+      } catch {
+        console.error('security configuration unavailable');
+        return reply({ message: 'Service configuration is unavailable.' }, 503);
+      }
     }
     if (body.action === 'claim') {
       const shiftId = boundedIdentifier(body.shiftId) ?? '';
