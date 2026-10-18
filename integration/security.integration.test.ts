@@ -11,12 +11,10 @@ if (/railway\.app|proxy\.rlwy\.net/i.test(testUrl) && process.env.ALLOW_REMOTE_S
 }
 
 process.env.DATABASE_URL = testUrl;
-process.env.EMAIL_VERIFICATION_REQUIRED = 'false';
 
 const { claimShift, changeSignup, getPublicSnapshot, updateCapacity } = await import('../lib/repository.ts');
 const sql = postgres(testUrl, { max: 24, prepare: false });
 const prefix = `security-${randomUUID()}`;
-const accessCode = 'Integration!234';
 
 function profile(index: number, shiftId: string) {
   return {
@@ -26,7 +24,6 @@ function profile(index: number, shiftId: string) {
     email: `${prefix}-${index}@example.test`,
     phone: '3525550100',
     wantsSiteLead: false,
-    accessCode,
   };
 }
 
@@ -77,7 +74,7 @@ void test('a full change target leaves the original signup confirmed', async () 
 
   const signupId = source.dashboard.shifts.find((shift) => shift.id === sourceId)?.signupId;
   assert.ok(signupId);
-  const changed = await changeSignup({ signupId, targetShiftId: targetId, email: profile(200, sourceId).email, accessCode });
+  const changed = await changeSignup({ signupId, targetShiftId: targetId, email: profile(200, sourceId).email });
   assert.equal(changed.ok, false);
   if (!changed.ok) assert.equal(changed.code, 'full');
   const [row] = await sql<{ status: string }[]>`SELECT status FROM signups WHERE id = ${signupId}`;
