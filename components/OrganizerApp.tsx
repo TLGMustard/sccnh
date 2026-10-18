@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Check, LogOut, RefreshCw, Search, ShieldCheck, UsersRound } from 'lucide-react';
+import { ArrowLeft, Check, Download, LogOut, RefreshCw, Search, ShieldCheck, UsersRound } from 'lucide-react';
 import { formatDay, formatTimeRange } from '@/lib/domain';
 import type { AdminSnapshot, AdminSignup, AdminVolunteer, ShiftView } from '@/lib/repository';
 
@@ -21,6 +21,18 @@ export function OrganizerApp({ organizerName }: { organizerName: string }) {
   const [loading, setLoading] = useState(true);
   const [needsAccess, setNeedsAccess] = useState(false);
   const [view, setView] = useState<OrganizerView>('overview');
+  const [exporting, setExporting] = useState(false);
+
+  async function exportSheet() {
+    setExporting(true); setError(null);
+    try {
+      const response = await fetch('/api/admin/export', { method: 'POST' });
+      const result = await response.json() as { ok?: boolean; message?: string };
+      if (!response.ok || !result.ok) setError(result.message ?? 'Google Sheets export failed.');
+      else window.alert('Shift signups exported to Google Sheets.');
+    } catch { setError('Google Sheets export failed.'); }
+    finally { setExporting(false); }
+  }
 
   const load = useCallback(async () => {
     setError(null);
@@ -94,7 +106,7 @@ export function OrganizerApp({ organizerName }: { organizerName: string }) {
         {error && <div role="alert" className="mt-5 flex items-center justify-between gap-3 border-2 border-poppy bg-poppy-wash p-3 text-sm font-bold text-poppy-dark"><span>{error}</span><button onClick={load} aria-label="Retry"><RefreshCw className="size-4" /></button></div>}
         {loading && <div className="mt-8 animate-pulse border-2 border-ink bg-paper-deep p-8 font-display text-2xl">Loading the operation board…</div>}
 
-        {data && <section className="mt-7"><nav className="grid grid-cols-2 border-2 border-ink sm:grid-cols-4" aria-label="Organizer sections">{(['overview', 'volunteers', 'shifts', 'check-in'] as OrganizerView[]).map((tab) => <button key={tab} type="button" onClick={() => setView(tab)} aria-current={view === tab ? 'page' : undefined} className={`min-h-12 border-b-2 border-r-2 border-ink px-3 py-3 text-sm font-black uppercase tracking-[.08em] last:border-r-0 sm:border-b-0 ${view === tab ? 'bg-blue text-paper' : 'bg-paper text-ink hover:bg-paper-deep'}`}>{tab}</button>)}</nav><div className="mt-6">{view === 'overview' && <Overview data={data} />}{view === 'volunteers' && <VolunteerRoster volunteers={data.volunteers} mutate={mutate} />}{view === 'shifts' && <ShiftManager shifts={data.shifts} mutate={mutate} />}{view === 'check-in' && <CheckIn data={data} mutate={mutate} />}</div></section>}
+        {data && <section className="mt-7"><div className="mb-4 flex flex-wrap gap-2"><button type="button" onClick={() => void exportSheet()} disabled={exporting} className="flex items-center gap-2 bg-orange px-4 py-2 text-sm font-bold text-paper disabled:opacity-50"><Download className="size-4" />{exporting ? 'Exporting…' : 'Export to Google Sheets'}</button><Link href="/api/admin/export" prefetch={false} className="border-2 border-ink px-4 py-2 text-sm font-bold">Download Excel-compatible CSV</Link></div><nav className="grid grid-cols-2 border-2 border-ink sm:grid-cols-4" aria-label="Organizer sections">{(['overview', 'volunteers', 'shifts', 'check-in'] as OrganizerView[]).map((tab) => <button key={tab} type="button" onClick={() => setView(tab)} aria-current={view === tab ? 'page' : undefined} className={`min-h-12 border-b-2 border-r-2 border-ink px-3 py-3 text-sm font-black uppercase tracking-[.08em] last:border-r-0 sm:border-b-0 ${view === tab ? 'bg-blue text-paper' : 'bg-paper text-ink hover:bg-paper-deep'}`}>{tab}</button>)}</nav><div className="mt-6">{view === 'overview' && <Overview data={data} />}{view === 'volunteers' && <VolunteerRoster volunteers={data.volunteers} mutate={mutate} />}{view === 'shifts' && <ShiftManager shifts={data.shifts} signups={data.signups} mutate={mutate} />}{view === 'check-in' && <CheckIn data={data} mutate={mutate} />}</div></section>}
         </>}
       </main>
     </div>
@@ -193,7 +205,7 @@ function VolunteerRoster({ volunteers, mutate }: { volunteers: AdminVolunteer[];
   );
 }
 
-function ShiftManager({ shifts, mutate }: { shifts: ShiftView[]; mutate: (action: AdminAction) => Promise<boolean> }) {
+function ShiftManager({ shifts, signups, mutate }: { shifts: ShiftView[]; signups: AdminSignup[]; mutate: (action: AdminAction) => Promise<boolean> }) {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<string | null>(null);
   async function save(shift: ShiftView) {
@@ -205,7 +217,7 @@ function ShiftManager({ shifts, mutate }: { shifts: ShiftView[]; mutate: (action
     setPending(null);
   }
   const dayGroups = [...new Map(shifts.map((shift) => [shift.day, shifts.filter((item) => item.day === shift.day)])).entries()];
-  return <section><SectionHeader title="Shift capacity" copy="Adjust a cap in place. The site refuses any number below the people already registered." /><div className="mt-5 border-2 border-ink">{dayGroups.map(([day, dayShifts]) => <div key={day}><div className="border-y border-ink bg-ink px-3 py-2 text-paper first:border-t-0"><span className="text-xs font-bold uppercase tracking-[.12em]">{formatDay(day)}</span></div>{dayShifts.map((shift) => <div key={shift.id} className="grid grid-cols-[105px_minmax(0,1fr)_95px] items-center gap-3 border-b border-ink px-3 py-2.5 last:border-b-0 sm:grid-cols-[145px_minmax(0,1fr)_160px_95px]"><strong className="text-sm">{formatTimeRange(shift.startsAt, shift.endsAt)}</strong><div className="min-w-0"><div className="truncate font-bold">{shift.location.shortName} · {shift.title ?? shift.task.name}</div><div className="text-xs text-ink-faint">{shift.filled} signed up</div></div><div className="hidden h-3 border border-ink bg-paper-deep sm:block"><div className="h-full bg-poppy" style={{ width: `${Math.min(100, shift.capacity ? shift.filled / shift.capacity * 100 : 100)}%` }} /></div><label className="flex items-center gap-2"><span className="sr-only">Capacity for {shift.location.name} at {formatTimeRange(shift.startsAt, shift.endsAt)}</span><span className="text-xs font-bold">CAP</span><input type="number" min={shift.filled} max={500} value={drafts[shift.id] ?? shift.capacity} onChange={(event) => setDrafts((current) => ({ ...current, [shift.id]: event.target.value }))} onBlur={() => save(shift)} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} disabled={pending === shift.id} className="h-9 w-16 border border-ink bg-paper-deep px-2 text-right font-bold" /></label></div>)}</div>)}</div></section>;
+  return <section><SectionHeader title="Shift roster & capacity" copy="See who claimed each time slot, or adjust capacity in place." /><div className="mt-5 border-2 border-ink">{dayGroups.map(([day, dayShifts]) => <div key={day}><div className="border-y border-ink bg-ink px-3 py-2 text-paper first:border-t-0"><span className="text-xs font-bold uppercase tracking-[.12em]">{formatDay(day)}</span></div>{dayShifts.map((shift) => <div key={shift.id} className="border-b border-ink px-3 py-2.5 last:border-b-0"><div className="grid grid-cols-[105px_minmax(0,1fr)_95px] items-center gap-3 sm:grid-cols-[145px_minmax(0,1fr)_160px_95px]"><strong className="text-sm">{formatTimeRange(shift.startsAt, shift.endsAt)}</strong><div className="min-w-0"><div className="truncate font-bold">{shift.location.shortName} · {shift.title ?? shift.task.name}</div><div className="text-xs text-ink-faint">{shift.filled} signed up</div></div><div className="hidden h-3 border border-ink bg-paper-deep sm:block"><div className="h-full bg-poppy" style={{ width: `${Math.min(100, shift.capacity ? shift.filled / shift.capacity * 100 : 100)}%` }} /></div><label className="flex items-center gap-2"><span className="sr-only">Capacity for {shift.location.name} at {formatTimeRange(shift.startsAt, shift.endsAt)}</span><span className="text-xs font-bold">CAP</span><input type="number" min={shift.filled} max={500} value={drafts[shift.id] ?? shift.capacity} onChange={(event) => setDrafts((current) => ({ ...current, [shift.id]: event.target.value }))} onBlur={() => save(shift)} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} disabled={pending === shift.id} className="h-9 w-16 border border-ink bg-paper-deep px-2 text-right font-bold" /></label></div>{shift.filled > 0 && <details className="mt-2 text-sm"><summary className="cursor-pointer font-bold text-blue">View signed-up volunteers ({shift.filled})</summary><ul className="mt-2 space-y-1 pl-4">{signups.filter((signup) => signup.shiftId === shift.id).map((signup) => <li key={signup.id}>{signup.volunteerName} · {signup.email} · {signup.phone}</li>)}</ul></details>}</div>)}</div>)}</div></section>;
 }
 
 function CheckIn({ data, mutate }: { data: AdminSnapshot; mutate: (action: AdminAction) => Promise<boolean> }) {

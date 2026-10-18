@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cancelSignup, changeSignup, claimShift, getPublicSnapshot, getVolunteerDashboard, hasVolunteerAccess } from '@/lib/repository';
+import { cancelSignup, changeSignup, claimShift, getPublicSnapshot, getVolunteerDashboard } from '@/lib/repository';
 import { attemptShiftConfirmation, buildShiftConfirmation, sendShiftConfirmation } from '@/lib/confirmation-email';
 import { readJsonRequest, requireSameOrigin, sensitiveResponseHeaders } from '@/lib/request-security';
 import { getApplicationOrigin } from '@/lib/app-config';
 import { boundedIdentifier } from '@/lib/signup-profile';
 import { normalizeEmail } from '@/lib/domain';
 import { consumeRateLimit, type RateLimitPolicy } from '@/lib/rate-limit';
-import { emailProofCookieName, emailVerificationRequired, readEmailProof, verificationSecret } from '@/lib/email-verification';
+import { emailProofCookieName, readEmailProof, verificationSecret } from '@/lib/email-verification';
 import { keyedDigest } from '@/lib/security-key';
-import { claimAuthorizationDecision } from '@/lib/claim-authorization';
+import { isValidEmail } from '@/lib/domain';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,25 +54,23 @@ export async function POST(request: NextRequest) {
         return reply({ message: 'Service configuration is unavailable.' }, 503);
       }
     }
+    if (policy) {
+      const email = normalizeEmail(textValue(body.email));
+      if (!isValidEmail(email) || new TextEncoder().encode(email).byteLength > 254) return reply({ message: 'Invalid request.' }, 400);
+      try {
+        const secret = verificationSecret();
+        const emailKey = keyedDigest('email-verification', email, secret);
+        if (!readEmailProof(request.cookies.get(emailProofCookieName())?.value, emailKey, secret)) {
+          return reply({ ok: false, code: 'email_verification_required', message: 'Verify your email to manage shifts.' }, 403);
+        }
+      } catch {
+        return reply({ message: 'Service configuration is unavailable.' }, 503);
+      }
+    }
     if (body.action === 'claim') {
       const shiftId = boundedIdentifier(body.shiftId) ?? '';
       const email = normalizeEmail(textValue(body.email));
-      const verificationRequired = emailVerificationRequired();
-      if (verificationRequired) {
-        try {
-          const secret = verificationSecret();
-          const emailKey = keyedDigest('email-verification', email, secret);
-          const proof = readEmailProof(request.cookies.get(emailProofCookieName())?.value, emailKey, secret);
-          const existingAccessVerified = proof ? false : await hasVolunteerAccess(email, textValue(body.accessCode));
-          if (claimAuthorizationDecision({ verificationRequired, hasEmailProof: Boolean(proof), existingAccessVerified }) === 'verify-email') {
-            return reply({ ok: false, code: 'email_verification_required', message: 'Verify your email before saving this shift.' }, 403);
-          }
-        } catch {
-          console.error('security configuration unavailable');
-          return reply({ message: 'Service configuration is unavailable.' }, 503);
-        }
-      }
-      const result = await claimShift({ shiftId, firstName: textValue(body.firstName), lastName: textValue(body.lastName), email, phone: textValue(body.phone), wantsSiteLead: body.wantsSiteLead === true, accessCode: textValue(body.accessCode) });
+      const result = await claimShift({ shiftId, firstName: textValue(body.firstName), lastName: textValue(body.lastName), email, phone: textValue(body.phone), wantsSiteLead: body.wantsSiteLead === true });
       if (!result.ok) return reply(result, 409);
       const claimed = result.dashboard.shifts.find((shift) => shift.id === shiftId);
       const delivered = Boolean(claimed) && await attemptShiftConfirmation(async () => {
@@ -89,15 +87,15 @@ export async function POST(request: NextRequest) {
       return reply({ ...result, receipt: delivered ? 'sent' : 'failed' });
     }
     if (body.action === 'mine') {
-      const dashboard = await getVolunteerDashboard(textValue(body.email), textValue(body.accessCode));
+      const dashboard = await getVolunteerDashboard(textValue(body.email));
       return dashboard ? reply({ dashboard }) : reply({ message: 'No matching volunteer record.' }, 404);
     }
     if (body.action === 'cancel') {
-      const result = await cancelSignup(boundedIdentifier(body.signupId) ?? '', textValue(body.email), textValue(body.accessCode));
+      const result = await cancelSignup(boundedIdentifier(body.signupId) ?? '', textValue(body.email));
       return reply(result, result.ok ? 200 : 404);
     }
     if (body.action === 'change') {
-      const result = await changeSignup({ signupId: boundedIdentifier(body.signupId) ?? '', targetShiftId: boundedIdentifier(body.targetShiftId) ?? '', email: textValue(body.email), accessCode: textValue(body.accessCode) });
+      const result = await changeSignup({ signupId: boundedIdentifier(body.signupId) ?? '', targetShiftId: boundedIdentifier(body.targetShiftId) ?? '', email: textValue(body.email) });
       return reply(result, result.ok ? 200 : 409);
     }
     return reply({ message: 'Invalid request.' }, 400);

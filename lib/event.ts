@@ -40,7 +40,7 @@ export const EVENT: EventInfo = {
   name: 'Spread Cream Cheese Not Hate',
   tagline: 'Volunteer signup',
   startDate: '2027-01-25',
-  endDate: '2027-01-27',
+  endDate: '2027-01-28',
   overview: 'Pick a shift.',
   essentials: [
     'Training is 1.5 hours.',
@@ -152,8 +152,8 @@ function shift(
 }
 
 const monday = '2027-01-25';
-const tuesday = '2027-01-26';
 const wednesday = '2027-01-27';
+const thursday = '2027-01-28';
 
 const greekRoutes: Array<[string, string]> = [
   ['Fraternity Row North', 'North route.'],
@@ -168,8 +168,8 @@ const greek = greekRoutes.map(([title, description]) =>
 );
 
 const bagging = [
-  shift(tuesday, 'hillel', 'bagging', 18, 0, 19, 0, 20),
-  shift(tuesday, 'hillel', 'bagging', 19, 0, 20, 0, 30),
+  shift(wednesday, 'hillel', 'bagging', 18, 0, 19, 0, 20),
+  shift(wednesday, 'hillel', 'bagging', 19, 0, 20, 0, 30),
 ];
 
 function timedShifts(day: string, locationId: string, startHour: number, endHour: number, minutes: 30 | 60, capacity: number): ShiftSeed[] {
@@ -193,9 +193,9 @@ function timedShifts(day: string, locationId: string, startHour: number, endHour
 export const SHIFTS: ShiftSeed[] = [
   ...greek,
   ...bagging,
-  shift(wednesday, 'turlington', 'setup', 7, 30, 8, 0, 20, { title: 'Set-Up' }),
-  ...timedShifts(wednesday, 'turlington', 8, 18, 30, 15),
-  shift(wednesday, 'turlington', 'cleanup', 18, 0, 18, 30, 20, { title: 'Clean Up' }),
-  ...timedShifts(wednesday, 'plaza', 8, 18, 30, 10),
-  ...timedShifts(wednesday, 'hpnp', 9, 17, 60, 7),
+  shift(thursday, 'turlington', 'setup', 7, 30, 8, 0, 20, { title: 'Set-Up' }),
+  ...timedShifts(thursday, 'turlington', 8, 18, 30, 15),
+  shift(thursday, 'turlington', 'cleanup', 18, 0, 18, 30, 20, { title: 'Clean Up' }),
+  ...timedShifts(thursday, 'plaza', 8, 18, 30, 10),
+  ...timedShifts(thursday, 'hpnp', 9, 17, 60, 7),
 ];

@@ -12,7 +12,7 @@ export function emailProofCookieName(production = process.env.NODE_ENV === 'prod
 }
 
 export function emailVerificationRequired(): boolean {
-  return process.env.EMAIL_VERIFICATION_REQUIRED === 'true';
+  return true;
 }
 
 export function verificationSecret(): string {

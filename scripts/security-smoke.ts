@@ -81,7 +81,7 @@ assert.equal(anonymousAdmin.status, 401);
 assertPrivate(anonymousAdmin, '/api/admin');
 
 for (const [path, body] of [
-  ['/api/site', { action: 'mine', email: 'nobody@example.invalid', accessCode: 'NotARealCode!23' }],
+  ['/api/site', { action: 'mine', email: 'nobody@example.invalid' }],
   ['/api/verification', { action: 'request', email: 'nobody@example.invalid' }],
   ['/api/admin/session', { accessCode: 'NotARealCode!23' }],
 ] as const) {
@@ -98,24 +98,14 @@ assert.equal(declaredOversized.status, 413);
 const chunkedOversized = await chunkedOversizedPost();
 assert.equal(chunkedOversized.status, 413);
 
-const testEmail = process.env.SECURITY_TEST_EMAIL;
-const testAccessCode = process.env.SECURITY_TEST_ACCESS_CODE;
-const testShiftId = process.env.SECURITY_TEST_SHIFT_ID;
-let forgedSignupId: string = randomUUID();
-if (testEmail && testAccessCode && testShiftId) {
-  const mine = await jsonPost('/api/site', { action: 'mine', email: testEmail, accessCode: testAccessCode });
-  assert.equal(mine.status, 200, 'controlled volunteer credentials were rejected');
-  const dashboard = JSON.parse(mine.text) as { dashboard?: { shifts?: { id: string; signupId: string }[] } };
-  forgedSignupId = dashboard.dashboard?.shifts?.find((shift) => shift.id === testShiftId)?.signupId ?? forgedSignupId;
-}
-const forgedCancel = await jsonPost('/api/site', { action: 'cancel', signupId: forgedSignupId, email: testEmail ?? `security-smoke-${randomUUID()}@example.invalid`, accessCode: 'DefinitelyWrong!23' });
-assert.ok([404, 409].includes(forgedCancel.status), 'forged cancellation was not rejected');
-assert.doesNotMatch(forgedCancel.text, /exists|email|access code/i, 'forged cancellation revealed account state');
+const forgedCancel = await jsonPost('/api/site', { action: 'cancel', signupId: randomUUID(), email: `security-smoke-${randomUUID()}@example.invalid` });
+assert.equal(forgedCancel.status, 403, 'unverified cancellation was not rejected');
+assert.doesNotMatch(forgedCancel.text, /exists|access code/i, 'forged cancellation revealed account state');
 
 if (process.env.SECURITY_TEST_RATE_LIMITS === 'true') {
   const lookupEmail = `security-limit-${randomUUID()}@example.invalid`;
   const lookupResults = [];
-  for (let index = 0; index < 9; index += 1) lookupResults.push(await jsonPost('/api/site', { action: 'mine', email: lookupEmail, accessCode: 'DefinitelyWrong!23' }, { 'x-forwarded-for': `203.0.113.${index + 1}, 192.0.2.240` }));
+  for (let index = 0; index < 9; index += 1) lookupResults.push(await jsonPost('/api/site', { action: 'mine', email: lookupEmail }, { 'x-forwarded-for': `203.0.113.${index + 1}, 192.0.2.240` }));
   assert.equal(lookupResults.at(-1)?.status, 429, 'volunteer lookup limit did not engage');
 
   const loginResults = [];

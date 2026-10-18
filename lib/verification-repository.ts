@@ -31,11 +31,7 @@ export async function requestEmailVerification(emailInput: string, now = Date.no
     'INSERT INTO email_verifications (id, email_key, code_digest, expires_at, attempts, consumed_at, created_at) VALUES ($1, $2, $3, $4, 0, NULL, $5)',
     [id, emailKey, digestVerificationCode(id, code, secret), now + 10 * 60_000, now],
   );
-  try {
-    await sendEmail(buildVerificationEmail(email, code));
-  } catch {
-    console.error('verification email failed');
-  }
+  await sendEmail(buildVerificationEmail(email, code));
 }
 
 export async function confirmEmailVerification(emailInput: string, code: string, now = Date.now()): Promise<string | null> {

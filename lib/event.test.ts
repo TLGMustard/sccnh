@@ -37,8 +37,8 @@ void test('tabling capacities match the approved staffing plan', () => {
 void test('publishes the correct operational role for each event day', () => {
   const expectedRoleByDay = {
     '2027-01-25': 'Announcing',
-    '2027-01-26': 'Pre-packaging',
-    '2027-01-27': 'Volunteering',
+    '2027-01-27': 'Pre-packaging',
+    '2027-01-28': 'Volunteering',
   } as const;
 
   for (const [day, role] of Object.entries(expectedRoleByDay)) {

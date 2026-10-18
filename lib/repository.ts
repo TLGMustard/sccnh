@@ -1,5 +1,5 @@
 import { execute, getDatabase, query } from '@/db';
-import { hashAccessCode, validateAccessCode, verifyAccessCode, verifyStoredAccessCode } from './access-code';
+import { hashAccessCode } from './access-code';
 import { availability, eventPhase, isValidEmail, normalizeEmail, type AvailabilityState, type EventPhase, type SignupStatus } from './domain';
 import { EVENT, LOCATIONS, SHIFTS, TASKS, type ShiftSeed } from './event';
 import { normalizeSignupProfile } from './signup-profile';
@@ -19,7 +19,7 @@ export type AdminSnapshot = { phase: EventPhase; volunteers: AdminVolunteer[]; s
 type VolunteerRow = { id: string; email: string; first_name: string; last_name: string; phone: string; wants_site_lead: boolean; access_code_hash: string };
 type ShiftRow = { id: string; day: string; location_id: string; task_id: string; starts_at: string; ends_at: string; capacity: number; title: string | null; description: string | null; location_name: string; location_short_name: string; location_blurb: string; walking_note: string; task_name: string; task_description: string; training: 'general' | 'lead'; filled: number };
 
-const SEED_VERSION = 'sccnh-2027-v5';
+const SEED_VERSION = 'sccnh-2027-v6';
 const SHIFT_SELECT = `SELECT s.id, s.day, s.location_id, s.task_id, s.starts_at, s.ends_at, s.capacity, s.title, s.description,
   l.name AS location_name, l.short_name AS location_short_name, l.blurb AS location_blurb, l.walking_note,
   t.name AS task_name, t.description AS task_description, t.training,
@@ -35,6 +35,12 @@ async function ensureReferenceData(): Promise<void> {
   for (const task of TASKS) await execute('INSERT INTO tasks (id, name, description, training) VALUES (?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, training = EXCLUDED.training', [task.id, task.name, task.description, task.training]);
   await execute('UPDATE shifts SET is_active = false');
   for (const shift of SHIFTS) await execute('INSERT INTO shifts (id, day, location_id, task_id, starts_at, ends_at, capacity, title, description, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, true) ON CONFLICT (id) DO UPDATE SET day = EXCLUDED.day, location_id = EXCLUDED.location_id, task_id = EXCLUDED.task_id, starts_at = EXCLUDED.starts_at, ends_at = EXCLUDED.ends_at, capacity = EXCLUDED.capacity, title = EXCLUDED.title, description = EXCLUDED.description, is_active = true', [shift.id, shift.day, shift.locationId, shift.taskId, shift.startsAt, shift.endsAt, shift.capacity, shift.title ?? null, shift.description ?? null]);
+  // Preserve any early signups when the packing and event shifts move by one day.
+  for (const shift of SHIFTS) {
+    const previousId = shift.taskId === 'bagging' ? shift.id.replace('20270127', '20270126')
+      : shift.day === '2027-01-28' ? shift.id.replace('20270128', '20270127') : null;
+    if (previousId) await execute('UPDATE signups SET shift_id = ?, updated_at = ? WHERE shift_id = ?', [shift.id, nowIso(), previousId]);
+  }
   await execute('INSERT INTO seed_versions (version, applied_at) VALUES (?, ?) ON CONFLICT (version) DO NOTHING', [SEED_VERSION, nowIso()]);
 }
 
@@ -60,31 +66,24 @@ async function dashboardFor(volunteer: VolunteerRow): Promise<VolunteerDashboard
   return { volunteer: { id: volunteer.id, email: volunteer.email, firstName: volunteer.first_name, lastName: volunteer.last_name, phone: volunteer.phone, wantsSiteLead: volunteer.wants_site_lead }, trainings: { general: trainingRows.some((row) => row.type === 'general'), lead: trainingRows.some((row) => row.type === 'lead') }, shifts: signupRows.map((row) => ({ ...mapShift(row), signupId: meta.get(row.id)!.id, status: meta.get(row.id)!.status })) };
 }
 
-async function volunteerWithAccess(emailInput: string, codeInput: string): Promise<VolunteerRow | null> {
-  const email = normalizeEmail(emailInput); const code = validateAccessCode(codeInput);
-  if (!isValidEmail(email) || !code) return null;
+async function volunteerByEmail(emailInput: string): Promise<VolunteerRow | null> {
+  const email = normalizeEmail(emailInput);
+  if (!isValidEmail(email)) return null;
   const rows = await query<VolunteerRow>('SELECT id, email, first_name, last_name, phone, wants_site_lead, access_code_hash FROM volunteers WHERE email = ? LIMIT 1', [email]);
-  const verified = await verifyStoredAccessCode(code, rows[0]?.access_code_hash);
-  return verified ? rows[0] : null;
+  return rows[0] ?? null;
 }
 
-export async function getVolunteerDashboard(emailInput: string, codeInput: string): Promise<VolunteerDashboard | null> {
-  await ensureReferenceData(); const volunteer = await volunteerWithAccess(emailInput, codeInput); return volunteer ? dashboardFor(volunteer) : null;
+export async function getVolunteerDashboard(emailInput: string): Promise<VolunteerDashboard | null> {
+  await ensureReferenceData(); const volunteer = await volunteerByEmail(emailInput); return volunteer ? dashboardFor(volunteer) : null;
 }
 
-export async function hasVolunteerAccess(emailInput: string, codeInput: string): Promise<boolean> {
+export async function claimShift(input: { shiftId: string; firstName: string; lastName: string; email: string; phone: string; wantsSiteLead: boolean }): Promise<{ ok: true; dashboard: VolunteerDashboard } | { ok: false; message: string; code: string }> {
   await ensureReferenceData();
-  return Boolean(await volunteerWithAccess(emailInput, codeInput));
-}
-
-export async function claimShift(input: { shiftId: string; firstName: string; lastName: string; email: string; phone: string; wantsSiteLead: boolean; accessCode: string }): Promise<{ ok: true; dashboard: VolunteerDashboard } | { ok: false; message: string; code: string }> {
-  await ensureReferenceData();
-  const profile = normalizeSignupProfile(input); const accessCode = validateAccessCode(input.accessCode);
-  if (!profile.ok || !accessCode) return { ok: false, code: 'invalid_input', message: !profile.ok ? profile.message : 'Use an access code with at least 12 characters.' };
+  const profile = normalizeSignupProfile(input);
+  if (!profile.ok) return { ok: false, code: 'invalid_input', message: profile.message };
   const { firstName, lastName, email, phone, wantsSiteLead } = profile.value;
-  const observed = (await query<VolunteerRow>('SELECT id, email, first_name, last_name, phone, wants_site_lead, access_code_hash FROM volunteers WHERE email = ? LIMIT 1', [email]))[0];
-  if (observed && !(await verifyAccessCode(accessCode, observed.access_code_hash))) return { ok: false, code: 'access_denied', message: 'We could not verify this signup.' };
-  const preparedHash = observed ? null : await hashAccessCode(accessCode);
+  // Keep a random, unusable hash for the legacy NOT NULL column until a schema migration removes it.
+  const preparedHash = await hashAccessCode(crypto.randomUUID());
 
   const result = await getDatabase().begin(async (sql) => {
     // Serialize the unique email identity before reading it again. SELECT FOR UPDATE
@@ -98,14 +97,10 @@ export async function claimShift(input: { shiftId: string; firstName: string; la
     const existing = await sql.unsafe<VolunteerRow[]>('SELECT id, email, first_name, last_name, phone, wants_site_lead, access_code_hash FROM volunteers WHERE email = $1 LIMIT 1 FOR UPDATE', [email]);
     let volunteer = existing[0];
     if (!volunteer) {
-      if (!preparedHash) return { ok: false as const, code: 'access_denied', message: 'We could not verify this signup.' };
       const id = crypto.randomUUID();
       await sql.unsafe('INSERT INTO volunteers (id, email, first_name, last_name, phone, wants_site_lead, access_code_hash, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [id, email, firstName, lastName, phone, wantsSiteLead, preparedHash, nowIso()]);
       volunteer = { id, email, first_name: firstName, last_name: lastName, phone, wants_site_lead: wantsSiteLead, access_code_hash: preparedHash };
     } else {
-      if (!observed || observed.id !== volunteer.id) {
-        if (!(await verifyAccessCode(accessCode, volunteer.access_code_hash))) return { ok: false as const, code: 'access_denied', message: 'We could not verify this signup.' };
-      }
       await sql.unsafe("UPDATE volunteers SET phone = CASE WHEN phone = '' THEN $1 ELSE phone END, wants_site_lead = wants_site_lead OR $2 WHERE id = $3", [phone, wantsSiteLead, volunteer.id]);
       if (!volunteer.phone) volunteer.phone = phone;
       if (wantsSiteLead) volunteer.wants_site_lead = true;
@@ -126,15 +121,15 @@ export async function claimShift(input: { shiftId: string; firstName: string; la
   return { ok: true, dashboard: await dashboardFor(result.volunteer) };
 }
 
-export async function cancelSignup(signupId: string, emailInput: string, codeInput: string): Promise<{ ok: boolean; message: string }> {
-  await ensureReferenceData(); const volunteer = await volunteerWithAccess(emailInput, codeInput);
+export async function cancelSignup(signupId: string, emailInput: string): Promise<{ ok: boolean; message: string }> {
+  await ensureReferenceData(); const volunteer = await volunteerByEmail(emailInput);
   if (!volunteer) return { ok: false, message: 'That shift could not be found.' };
   return (await execute("UPDATE signups SET status = 'cancelled', updated_at = ? WHERE id = ? AND volunteer_id = ? AND status IN ('confirmed', 'checked_in')", [nowIso(), signupId, volunteer.id])) ? { ok: true, message: 'Shift cancelled.' } : { ok: false, message: 'That shift could not be found.' };
 }
 
-export async function changeSignup(input: { signupId: string; targetShiftId: string; email: string; accessCode: string }): Promise<{ ok: true; dashboard: VolunteerDashboard } | { ok: false; message: string; code: string }> {
+export async function changeSignup(input: { signupId: string; targetShiftId: string; email: string }): Promise<{ ok: true; dashboard: VolunteerDashboard } | { ok: false; message: string; code: string }> {
   await ensureReferenceData();
-  const volunteer = await volunteerWithAccess(input.email, input.accessCode);
+  const volunteer = await volunteerByEmail(input.email);
   if (!volunteer) return { ok: false, code: 'access_denied', message: 'We could not verify this signup.' };
 
   const result = await getDatabase().begin(async (sql) => {
