@@ -37,14 +37,22 @@ void test('tabling capacities match the approved staffing plan', () => {
 void test('publishes the correct operational role for each event day', () => {
   const expectedRoleByDay = {
     '2027-01-25': 'Announcing',
-    '2027-01-26': 'Pre-packaging',
-    '2027-01-27': 'Volunteering',
+    '2027-01-27': 'Pre-packaging',
+    '2027-01-28': 'Volunteering',
   } as const;
 
   for (const [day, role] of Object.entries(expectedRoleByDay)) {
     const roles = SHIFTS.filter((shift) => shift.day === day).map((shift) => TASKS.find((task) => task.id === shift.taskId)?.name);
     assert.deepEqual([...new Set(roles)], [role]);
   }
+});
+
+void test('corrected dates preserve existing shift IDs and reservations', () => {
+  assert.equal(EVENT.bagelDay, '2027-01-28');
+  assert.equal(EVENT.endDate, '2027-01-28');
+  assert.equal(SHIFTS.find((shift) => shift.id === 'hillel-20270126-1800')?.day, '2027-01-27');
+  assert.equal(SHIFTS.find((shift) => shift.id === 'turlington-20270127-0800')?.startsAt, '2027-01-28T08:00:00-05:00');
+  assert.ok(SHIFTS.every((shift) => shift.startsAt.startsWith(shift.day) && shift.endsAt.startsWith(shift.day)));
 });
 
 void test('publishes no law site and requires only one 1.5-hour training', () => {

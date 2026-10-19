@@ -14,6 +14,7 @@ process.env.DATABASE_URL = testUrl;
 process.env.EMAIL_VERIFICATION_REQUIRED = 'false';
 
 const { claimShift, changeSignup, getPublicSnapshot, updateCapacity } = await import('../lib/repository.ts');
+const { getDatabase } = await import('../db/index.ts');
 const sql = postgres(testUrl, { max: 24, prepare: false });
 const prefix = `security-${randomUUID()}`;
 const accessCode = 'Integration!234';
@@ -46,6 +47,7 @@ after(async () => {
   await sql`DELETE FROM volunteers WHERE email LIKE ${`${prefix}%`}`;
   await sql`DELETE FROM shifts WHERE id LIKE ${`${prefix}%`}`;
   await sql.end();
+  await getDatabase().end();
 });
 
 void test('concurrent claims cannot exceed capacity', async () => {

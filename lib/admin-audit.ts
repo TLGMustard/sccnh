@@ -2,12 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { execute } from '../db/index.ts';
 import { keyedDigest } from './security-key.ts';
 
-export type AdminAuditAction = 'login' | 'logout' | 'training' | 'capacity' | 'checkin' | 'cancel-signups' | 'delete-volunteer';
-export type AdminAuditOutcome = 'success' | 'denied' | 'rejected' | 'error';
+export type AdminAuditAction = 'login' | 'logout' | 'training' | 'capacity' | 'checkin' | 'cancel-signups' | 'delete-volunteer' | 'export-csv' | 'export-sheets';
+export type AdminAuditOutcome = 'started' | 'success' | 'denied' | 'rejected' | 'error';
 export type AdminAuditTarget = 'session' | 'volunteer' | 'shift' | 'signup';
 
-const ACTIONS = new Set<AdminAuditAction>(['login', 'logout', 'training', 'capacity', 'checkin', 'cancel-signups', 'delete-volunteer']);
-const OUTCOMES = new Set<AdminAuditOutcome>(['success', 'denied', 'rejected', 'error']);
+const ACTIONS = new Set<AdminAuditAction>(['login', 'logout', 'training', 'capacity', 'checkin', 'cancel-signups', 'delete-volunteer', 'export-csv', 'export-sheets']);
+const OUTCOMES = new Set<AdminAuditOutcome>(['started', 'success', 'denied', 'rejected', 'error']);
 const TARGETS = new Set<AdminAuditTarget>(['session', 'volunteer', 'shift', 'signup']);
 
 export type AdminAuditRecord = {

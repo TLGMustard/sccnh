@@ -7,7 +7,7 @@ const body = IBM_Plex_Sans({ subsets: ['latin'], display: 'swap', variable: '--f
 
 export const metadata: Metadata = {
   title: 'SCCNH 2027 Volunteer Signup · UF Hillel',
-  description: 'SCCNH volunteer signup at the University of Florida, January 25 to 27, 2027.',
+  description: 'SCCNH at the University of Florida. Bagel Day: January 28, 2027. Pre-packaging: January 27.',
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

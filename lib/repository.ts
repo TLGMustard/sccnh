@@ -1,25 +1,28 @@
-import { execute, getDatabase, query } from '@/db';
-import { hashAccessCode, validateAccessCode, verifyAccessCode, verifyStoredAccessCode } from './access-code';
-import { availability, eventPhase, isValidEmail, normalizeEmail, type AvailabilityState, type EventPhase, type SignupStatus } from './domain';
-import { EVENT, LOCATIONS, SHIFTS, TASKS, type ShiftSeed } from './event';
-import { normalizeSignupProfile } from './signup-profile';
-import { checkInDecision } from './check-in';
-import { capacityUpdateDecision, shiftChangeDecision, shiftReservationDecision } from './shift-reservation';
-import { volunteerRemovalDecision } from './admin-actions';
-import { emailVerificationRequired } from './email-verification';
+import { execute, getDatabase, query } from '../db/index.ts';
+import { hashAccessCode, validateAccessCode, verifyAccessCode, verifyStoredAccessCode } from './access-code.ts';
+import { availability, eventPhase, isValidEmail, normalizeEmail, type AvailabilityState, type EventPhase, type SignupStatus } from './domain.ts';
+import { EVENT, LOCATIONS, SHIFTS, TASKS, type ShiftSeed } from './event.ts';
+import { normalizeSignupProfile } from './signup-profile.ts';
+import { checkInDecision } from './check-in.ts';
+import { capacityUpdateDecision, shiftChangeDecision, shiftReservationDecision } from './shift-reservation.ts';
+import { volunteerRemovalDecision } from './admin-actions.ts';
+import { emailVerificationRequired } from './email-verification.ts';
+import { BROWSER_SESSION_SECONDS, selectedShiftIds, shiftsOverlap } from './browser-signup.ts';
+import type { SignupProfile } from './signup-profile';
 
 export type ShiftView = ShiftSeed & { location: (typeof LOCATIONS)[number]; task: (typeof TASKS)[number]; filled: number; remaining: number; state: AvailabilityState };
 export type PublicSnapshot = { event: typeof EVENT; essentials: string[]; phase: EventPhase; emailVerificationRequired: boolean; shifts: ShiftView[] };
 export type VolunteerShift = ShiftView & { signupId: string; status: SignupStatus };
 export type VolunteerDashboard = { volunteer: { id: string; email: string; firstName: string; lastName: string; phone: string; wantsSiteLead: boolean }; trainings: { general: boolean; lead: boolean }; shifts: VolunteerShift[] };
+export type BrowserDashboard = { shifts: VolunteerShift[] };
 export type AdminVolunteer = VolunteerDashboard['volunteer'] & { shiftCount: number; trainings: { general: boolean; lead: boolean } };
-export type AdminSignup = { id: string; status: SignupStatus; volunteerId: string; volunteerName: string; email: string; phone: string; shiftId: string; locationName: string; taskName: string; startsAt: string; trainingComplete: boolean };
+export type AdminSignup = { id: string; status: SignupStatus; volunteerId: string; volunteerName: string; email: string; phone: string; shiftId: string; locationName: string; taskName: string; startsAt: string; trainingComplete: boolean; wantsSiteLead: boolean };
 export type AdminSnapshot = { phase: EventPhase; volunteers: AdminVolunteer[]; signups: AdminSignup[]; shifts: ShiftView[] };
 
 type VolunteerRow = { id: string; email: string; first_name: string; last_name: string; phone: string; wants_site_lead: boolean; access_code_hash: string };
 type ShiftRow = { id: string; day: string; location_id: string; task_id: string; starts_at: string; ends_at: string; capacity: number; title: string | null; description: string | null; location_name: string; location_short_name: string; location_blurb: string; walking_note: string; task_name: string; task_description: string; training: 'general' | 'lead'; filled: number };
 
-const SEED_VERSION = 'sccnh-2027-v5';
+const SEED_VERSION = 'sccnh-2027-v6-dates';
 const SHIFT_SELECT = `SELECT s.id, s.day, s.location_id, s.task_id, s.starts_at, s.ends_at, s.capacity, s.title, s.description,
   l.name AS location_name, l.short_name AS location_short_name, l.blurb AS location_blurb, l.walking_note,
   t.name AS task_name, t.description AS task_description, t.training,
@@ -30,12 +33,16 @@ function nowIso(): string { return new Date().toISOString(); }
 
 async function ensureReferenceData(): Promise<void> {
   if ((await query<{ version: string }>('SELECT version FROM seed_versions WHERE version = ? LIMIT 1', [SEED_VERSION])).length) return;
-  await execute('INSERT INTO events (id, name, tagline, overview, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, tagline = EXCLUDED.tagline, overview = EXCLUDED.overview, start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date', [EVENT.id, EVENT.name, EVENT.tagline, EVENT.overview, EVENT.startDate, EVENT.endDate]);
-  for (const location of LOCATIONS) await execute('INSERT INTO locations (id, name, short_name, blurb, walking_note) VALUES (?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, short_name = EXCLUDED.short_name, blurb = EXCLUDED.blurb, walking_note = EXCLUDED.walking_note', [location.id, location.name, location.shortName, location.blurb, location.walkingNote]);
-  for (const task of TASKS) await execute('INSERT INTO tasks (id, name, description, training) VALUES (?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, training = EXCLUDED.training', [task.id, task.name, task.description, task.training]);
-  await execute('UPDATE shifts SET is_active = false');
-  for (const shift of SHIFTS) await execute('INSERT INTO shifts (id, day, location_id, task_id, starts_at, ends_at, capacity, title, description, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, true) ON CONFLICT (id) DO UPDATE SET day = EXCLUDED.day, location_id = EXCLUDED.location_id, task_id = EXCLUDED.task_id, starts_at = EXCLUDED.starts_at, ends_at = EXCLUDED.ends_at, capacity = EXCLUDED.capacity, title = EXCLUDED.title, description = EXCLUDED.description, is_active = true', [shift.id, shift.day, shift.locationId, shift.taskId, shift.startsAt, shift.endsAt, shift.capacity, shift.title ?? null, shift.description ?? null]);
-  await execute('INSERT INTO seed_versions (version, applied_at) VALUES (?, ?) ON CONFLICT (version) DO NOTHING', [SEED_VERSION, nowIso()]);
+  await getDatabase().begin(async (sql) => {
+    await sql.unsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', ['sccnh-reference-data']);
+    if ((await sql.unsafe('SELECT version FROM seed_versions WHERE version = $1 LIMIT 1', [SEED_VERSION])).length) return;
+    await sql.unsafe('INSERT INTO events (id, name, tagline, overview, start_date, end_date) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, tagline = EXCLUDED.tagline, overview = EXCLUDED.overview, start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date', [EVENT.id, EVENT.name, EVENT.tagline, EVENT.overview, EVENT.startDate, EVENT.endDate]);
+    for (const location of LOCATIONS) await sql.unsafe('INSERT INTO locations (id, name, short_name, blurb, walking_note) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, short_name = EXCLUDED.short_name, blurb = EXCLUDED.blurb, walking_note = EXCLUDED.walking_note', [location.id, location.name, location.shortName, location.blurb, location.walkingNote]);
+    for (const task of TASKS) await sql.unsafe('INSERT INTO tasks (id, name, description, training) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, training = EXCLUDED.training', [task.id, task.name, task.description, task.training]);
+    // Dates move in place. Never reset an organizer's capacity override or remove bookings.
+    for (const shift of SHIFTS) await sql.unsafe('INSERT INTO shifts (id, day, location_id, task_id, starts_at, ends_at, capacity, title, description, is_active) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true) ON CONFLICT (id) DO UPDATE SET day = EXCLUDED.day, location_id = EXCLUDED.location_id, task_id = EXCLUDED.task_id, starts_at = EXCLUDED.starts_at, ends_at = EXCLUDED.ends_at, title = EXCLUDED.title, description = EXCLUDED.description, is_active = true', [shift.id, shift.day, shift.locationId, shift.taskId, shift.startsAt, shift.endsAt, shift.capacity, shift.title ?? null, shift.description ?? null]);
+    await sql.unsafe('INSERT INTO seed_versions (version, applied_at) VALUES ($1, $2) ON CONFLICT (version) DO NOTHING', [SEED_VERSION, nowIso()]);
+  });
 }
 
 function mapShift(row: ShiftRow): ShiftView {
@@ -63,7 +70,7 @@ async function dashboardFor(volunteer: VolunteerRow): Promise<VolunteerDashboard
 async function volunteerWithAccess(emailInput: string, codeInput: string): Promise<VolunteerRow | null> {
   const email = normalizeEmail(emailInput); const code = validateAccessCode(codeInput);
   if (!isValidEmail(email) || !code) return null;
-  const rows = await query<VolunteerRow>('SELECT id, email, first_name, last_name, phone, wants_site_lead, access_code_hash FROM volunteers WHERE email = ? LIMIT 1', [email]);
+  const rows = await query<VolunteerRow>('SELECT id, email, first_name, last_name, phone, wants_site_lead, access_code_hash FROM volunteers WHERE email = ? AND browser_key IS NULL LIMIT 1', [email]);
   const verified = await verifyStoredAccessCode(code, rows[0]?.access_code_hash);
   return verified ? rows[0] : null;
 }
@@ -77,12 +84,70 @@ export async function hasVolunteerAccess(emailInput: string, codeInput: string):
   return Boolean(await volunteerWithAccess(emailInput, codeInput));
 }
 
+export async function getBrowserDashboard(managementKey: string): Promise<BrowserDashboard> {
+  await ensureReferenceData();
+  const rows = await query<ShiftRow & { signup_id: string; signup_status: SignupStatus }>(`${SHIFT_SELECT.replace('SELECT s.id', 'SELECT mine.id AS signup_id, mine.status AS signup_status, s.id')} JOIN signups mine ON mine.shift_id = s.id WHERE mine.management_key = ? AND mine.management_expires_at > ? AND mine.status IN ('confirmed', 'checked_in') GROUP BY mine.id, s.id, l.id, t.id ORDER BY s.starts_at`, [managementKey, Date.now()]);
+  return { shifts: rows.map((row) => ({ ...mapShift(row), signupId: row.signup_id, status: row.signup_status })) };
+}
+
+export async function claimBrowserShifts(input: SignupProfile & { shiftIds: unknown; consent: unknown }, managementKey: string): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
+  const profile = normalizeSignupProfile(input);
+  const shiftIds = selectedShiftIds(input.shiftIds);
+  if (!profile.ok || !shiftIds || input.consent !== true) return { ok: false, code: 'invalid_input', message: !profile.ok ? profile.message : 'Select 1 to 20 shifts and accept the volunteer consent.' };
+  await ensureReferenceData();
+  // The random legacy credential is never shown or used for email-only signups.
+  const preparedHash = await hashAccessCode(crypto.randomUUID());
+  const value = profile.value;
+  return getDatabase().begin(async (sql) => {
+    await sql.unsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`volunteer-email:${value.email}`]);
+    const slots = await sql.unsafe<{ id: string; is_active: boolean; capacity: number; starts_at: string; ends_at: string }[]>('SELECT id, is_active, capacity, starts_at, ends_at FROM shifts WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE', [shiftIds]);
+    if (slots.length !== shiftIds.length || slots.some((slot) => !slot.is_active)) return { ok: false, code: 'unavailable', message: 'One selected shift is unavailable. Refresh and try again.' };
+    if (shiftsOverlap(slots.map((slot) => ({ startsAt: slot.starts_at, endsAt: slot.ends_at })))) return { ok: false, code: 'overlap', message: 'Choose shifts that do not overlap.' };
+    for (const slot of slots) {
+      const [count] = await sql.unsafe<{ filled: number }[]>("SELECT COUNT(*)::int AS filled FROM signups WHERE shift_id = $1 AND status IN ('confirmed', 'checked_in')", [slot.id]);
+      if (Number(count.filled) >= slot.capacity) return { ok: false, code: 'full', message: 'One selected shift just filled. Nothing was booked. Update your selection.' };
+    }
+    const [existing] = await sql.unsafe<{ id: string }[]>('SELECT id FROM volunteers WHERE email = $1 AND browser_key = $2 FOR UPDATE', [value.email, managementKey]);
+    const volunteerId = existing?.id ?? crypto.randomUUID();
+    const duplicates = existing ? await sql.unsafe("SELECT id FROM signups WHERE volunteer_id = $1 AND shift_id = ANY($2::text[]) AND status IN ('confirmed', 'checked_in')", [volunteerId, shiftIds]) : [];
+    // An email is contact data, not an identity credential. Other browsers and legacy
+    // accounts are isolated so signup cannot disclose whether an email is registered.
+    if (duplicates.length) return { ok: false, code: 'unavailable', message: 'This selection could not be booked. Check My shifts in the browser you used before, or contact an organizer.' };
+    const timestamp = nowIso();
+    if (!existing) await sql.unsafe('INSERT INTO volunteers (id, email, first_name, last_name, phone, wants_site_lead, access_code_hash, created_at, browser_key) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)', [volunteerId, value.email, value.firstName, value.lastName, value.phone, value.wantsSiteLead, preparedHash, timestamp, managementKey]);
+    for (const shiftId of shiftIds) await sql.unsafe("INSERT INTO signups (id, volunteer_id, shift_id, status, created_at, updated_at, management_key, management_expires_at, registration) VALUES ($1, $2, $3, 'confirmed', $4, $4, $5, $6, $7::jsonb) ON CONFLICT (volunteer_id, shift_id) DO UPDATE SET status = 'confirmed', updated_at = EXCLUDED.updated_at, management_key = EXCLUDED.management_key, management_expires_at = EXCLUDED.management_expires_at, registration = EXCLUDED.registration WHERE signups.status = 'cancelled'", [crypto.randomUUID(), volunteerId, shiftId, timestamp, managementKey, Date.now() + BROWSER_SESSION_SECONDS * 1000, { ...value, consentedAt: timestamp, consentVersion: 'sccnh-volunteer-v1' }]);
+    return { ok: true };
+  });
+}
+
+export async function cancelBrowserSignup(signupId: string, managementKey: string): Promise<boolean> {
+  return Boolean(await execute("UPDATE signups SET status = 'cancelled', updated_at = ? WHERE id = ? AND management_key = ? AND management_expires_at > ? AND status IN ('confirmed', 'checked_in')", [nowIso(), signupId, managementKey, Date.now()]));
+}
+
+export async function changeBrowserSignup(signupId: string, targetShiftId: string, managementKey: string): Promise<{ ok: boolean; message: string }> {
+  return getDatabase().begin(async (sql) => {
+    const [identity] = await sql.unsafe<{ email: string }[]>('SELECT v.email FROM signups sg JOIN volunteers v ON v.id = sg.volunteer_id WHERE sg.id = $1 AND sg.management_key = $2 AND sg.management_expires_at > $3', [signupId, managementKey, Date.now()]);
+    if (!identity) return { ok: false, message: 'That shift could not be found in this browser.' };
+    await sql.unsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`volunteer-email:${identity.email}`]);
+    const [source] = await sql.unsafe<{ volunteer_id: string; shift_id: string }[]>("SELECT volunteer_id, shift_id FROM signups WHERE id = $1 AND management_key = $2 AND management_expires_at > $3 AND status = 'confirmed' FOR UPDATE", [signupId, managementKey, Date.now()]);
+    if (!source) return { ok: false, message: 'That shift could not be found in this browser.' };
+    const [target] = await sql.unsafe<{ is_active: boolean; capacity: number }[]>('SELECT is_active, capacity FROM shifts WHERE id = $1 FOR UPDATE', [targetShiftId]);
+    const [count] = await sql.unsafe<{ filled: number }[]>("SELECT COUNT(*)::int AS filled FROM signups WHERE shift_id = $1 AND status IN ('confirmed', 'checked_in')", [targetShiftId]);
+    const decision = shiftChangeDecision({ sourceExists: true, sourceShiftId: source.shift_id, targetShiftId, targetExists: Boolean(target), targetIsActive: target?.is_active ?? false, targetCapacity: Number(target?.capacity ?? 0), targetFilled: Number(count.filled) });
+    if (!decision.ok) return decision;
+    const duplicate = await sql.unsafe('SELECT id FROM signups WHERE volunteer_id = $1 AND shift_id = $2 FOR UPDATE', [source.volunteer_id, targetShiftId]);
+    if (duplicate.length) return { ok: false, message: 'Choose another shift, or cancel and book this selection again.' };
+    await sql.unsafe('UPDATE signups SET shift_id = $1, updated_at = $2 WHERE id = $3', [targetShiftId, nowIso(), signupId]);
+    return { ok: true, message: 'Shift changed.' };
+  });
+}
+
 export async function claimShift(input: { shiftId: string; firstName: string; lastName: string; email: string; phone: string; wantsSiteLead: boolean; accessCode: string }): Promise<{ ok: true; dashboard: VolunteerDashboard } | { ok: false; message: string; code: string }> {
   await ensureReferenceData();
   const profile = normalizeSignupProfile(input); const accessCode = validateAccessCode(input.accessCode);
   if (!profile.ok || !accessCode) return { ok: false, code: 'invalid_input', message: !profile.ok ? profile.message : 'Use an access code with at least 12 characters.' };
   const { firstName, lastName, email, phone, wantsSiteLead } = profile.value;
-  const observed = (await query<VolunteerRow>('SELECT id, email, first_name, last_name, phone, wants_site_lead, access_code_hash FROM volunteers WHERE email = ? LIMIT 1', [email]))[0];
+  const observed = (await query<VolunteerRow>('SELECT id, email, first_name, last_name, phone, wants_site_lead, access_code_hash FROM volunteers WHERE email = ? AND browser_key IS NULL LIMIT 1', [email]))[0];
   if (observed && !(await verifyAccessCode(accessCode, observed.access_code_hash))) return { ok: false, code: 'access_denied', message: 'We could not verify this signup.' };
   const preparedHash = observed ? null : await hashAccessCode(accessCode);
 
@@ -95,7 +160,7 @@ export async function claimShift(input: { shiftId: string; firstName: string; la
     const shiftDecision = shiftReservationDecision({ exists: Boolean(shiftRows[0]), isActive: shiftRows[0]?.is_active ?? false, capacity: Number(shiftRows[0]?.capacity ?? 0), filled: Number(filledRows[0]?.filled ?? 0) });
     if (!shiftDecision.ok) return shiftDecision;
 
-    const existing = await sql.unsafe<VolunteerRow[]>('SELECT id, email, first_name, last_name, phone, wants_site_lead, access_code_hash FROM volunteers WHERE email = $1 LIMIT 1 FOR UPDATE', [email]);
+    const existing = await sql.unsafe<VolunteerRow[]>('SELECT id, email, first_name, last_name, phone, wants_site_lead, access_code_hash FROM volunteers WHERE email = $1 AND browser_key IS NULL LIMIT 1 FOR UPDATE', [email]);
     let volunteer = existing[0];
     if (!volunteer) {
       if (!preparedHash) return { ok: false as const, code: 'access_denied', message: 'We could not verify this signup.' };
@@ -117,7 +182,7 @@ export async function claimShift(input: { shiftId: string; firstName: string; la
     const timestamp = nowIso();
     const changed = await sql.unsafe(`INSERT INTO signups (id, volunteer_id, shift_id, status, created_at, updated_at)
       VALUES ($1, $2, $3, 'confirmed', $4, $4)
-      ON CONFLICT (volunteer_id, shift_id) DO UPDATE SET status = 'confirmed', updated_at = EXCLUDED.updated_at WHERE signups.status = 'cancelled'`, [crypto.randomUUID(), volunteer.id, input.shiftId, timestamp]);
+      ON CONFLICT (volunteer_id, shift_id) DO UPDATE SET status = 'confirmed', updated_at = EXCLUDED.updated_at, management_key = NULL, management_expires_at = NULL, registration = NULL WHERE signups.status = 'cancelled'`, [crypto.randomUUID(), volunteer.id, input.shiftId, timestamp]);
     if (!changed.count) return { ok: false as const, code: 'duplicate', message: 'You already have this shift.' };
     return { ok: true as const, volunteer };
   });
@@ -138,6 +203,7 @@ export async function changeSignup(input: { signupId: string; targetShiftId: str
   if (!volunteer) return { ok: false, code: 'access_denied', message: 'We could not verify this signup.' };
 
   const result = await getDatabase().begin(async (sql) => {
+    await sql.unsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`volunteer-email:${volunteer.email}`]);
     const source = await sql.unsafe<{ shift_id: string }[]>('SELECT shift_id FROM signups WHERE id = $1 AND volunteer_id = $2 AND status = \'confirmed\' FOR UPDATE', [input.signupId, volunteer.id]);
     const target = await sql.unsafe<{ is_active: boolean; capacity: number }[]>('SELECT is_active, capacity FROM shifts WHERE id = $1 FOR UPDATE', [input.targetShiftId]);
     const targetFilled = target[0] ? await sql.unsafe<{ filled: number }[]>("SELECT COUNT(*)::int AS filled FROM signups WHERE shift_id = $1 AND status IN ('confirmed', 'checked_in')", [input.targetShiftId]) : [];
@@ -185,10 +251,10 @@ export async function getAdminSnapshot(): Promise<AdminSnapshot> {
   await ensureReferenceData();
   const [volunteers, signups, shifts] = await Promise.all([
     query<{ id: string; email: string; first_name: string; last_name: string; phone: string; wants_site_lead: boolean; shift_count: number; general: number; lead: number }>("SELECT v.id, v.email, v.first_name, v.last_name, v.phone, v.wants_site_lead, COUNT(DISTINCT CASE WHEN sg.status IN ('confirmed', 'checked_in') THEN sg.id END) AS shift_count, MAX(CASE WHEN tr.type = 'general' THEN 1 ELSE 0 END) AS general, MAX(CASE WHEN tr.type = 'lead' THEN 1 ELSE 0 END) AS lead FROM volunteers v LEFT JOIN signups sg ON sg.volunteer_id = v.id LEFT JOIN trainings tr ON tr.volunteer_id = v.id GROUP BY v.id ORDER BY v.last_name, v.first_name"),
-    query<{ id: string; status: SignupStatus; volunteer_id: string; volunteer_name: string; email: string; phone: string; shift_id: string; location_name: string; task_name: string; starts_at: string; training_complete: boolean }>("SELECT sg.id, sg.status, v.id AS volunteer_id, v.first_name || ' ' || v.last_name AS volunteer_name, v.email, v.phone, s.id AS shift_id, l.name AS location_name, t.name AS task_name, s.starts_at, EXISTS (SELECT 1 FROM trainings completed WHERE completed.volunteer_id = v.id AND completed.type = 'general') AS training_complete FROM signups sg JOIN volunteers v ON v.id = sg.volunteer_id JOIN shifts s ON s.id = sg.shift_id JOIN locations l ON l.id = s.location_id JOIN tasks t ON t.id = s.task_id WHERE sg.status IN ('confirmed', 'checked_in') ORDER BY s.starts_at, v.last_name, v.first_name"),
+    query<{ id: string; status: SignupStatus; volunteer_id: string; volunteer_name: string; email: string; phone: string; shift_id: string; location_name: string; task_name: string; starts_at: string; training_complete: boolean; wants_site_lead: boolean }>("SELECT sg.id, sg.status, v.id AS volunteer_id, COALESCE(sg.registration->>'firstName', v.first_name) || ' ' || COALESCE(sg.registration->>'lastName', v.last_name) AS volunteer_name, v.email, COALESCE(sg.registration->>'phone', v.phone) AS phone, COALESCE((sg.registration->>'wantsSiteLead')::boolean, v.wants_site_lead) AS wants_site_lead, s.id AS shift_id, l.name AS location_name, t.name AS task_name, s.starts_at, EXISTS (SELECT 1 FROM trainings completed WHERE completed.volunteer_id = v.id AND completed.type = 'general') AS training_complete FROM signups sg JOIN volunteers v ON v.id = sg.volunteer_id JOIN shifts s ON s.id = sg.shift_id JOIN locations l ON l.id = s.location_id JOIN tasks t ON t.id = s.task_id WHERE sg.status IN ('confirmed', 'checked_in') ORDER BY s.starts_at, v.last_name, v.first_name"),
     listShiftViews(),
   ]);
-  return { phase: eventPhase(), volunteers: volunteers.map((row) => ({ id: row.id, email: row.email, firstName: row.first_name, lastName: row.last_name, phone: row.phone, wantsSiteLead: row.wants_site_lead, shiftCount: Number(row.shift_count), trainings: { general: Boolean(row.general), lead: Boolean(row.lead) } })), signups: signups.map((row) => ({ id: row.id, status: row.status, volunteerId: row.volunteer_id, volunteerName: row.volunteer_name, email: row.email, phone: row.phone, shiftId: row.shift_id, locationName: row.location_name, taskName: row.task_name, startsAt: row.starts_at, trainingComplete: row.training_complete })), shifts };
+  return { phase: eventPhase(), volunteers: volunteers.map((row) => ({ id: row.id, email: row.email, firstName: row.first_name, lastName: row.last_name, phone: row.phone, wantsSiteLead: row.wants_site_lead, shiftCount: Number(row.shift_count), trainings: { general: Boolean(row.general), lead: Boolean(row.lead) } })), signups: signups.map((row) => ({ id: row.id, status: row.status, volunteerId: row.volunteer_id, volunteerName: row.volunteer_name, email: row.email, phone: row.phone, shiftId: row.shift_id, locationName: row.location_name, taskName: row.task_name, startsAt: row.starts_at, trainingComplete: row.training_complete, wantsSiteLead: row.wants_site_lead })), shifts };
 }
 
 export async function setTraining(input: { volunteerId: string; type: 'general' | 'lead'; complete: boolean; completedBy: string }): Promise<{ ok: boolean; message: string }> {

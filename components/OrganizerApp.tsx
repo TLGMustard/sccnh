@@ -21,6 +21,27 @@ export function OrganizerApp({ organizerName }: { organizerName: string }) {
   const [loading, setLoading] = useState(true);
   const [needsAccess, setNeedsAccess] = useState(false);
   const [view, setView] = useState<OrganizerView>('overview');
+  const [exporting, setExporting] = useState(false);
+  const [sheetUrl, setSheetUrl] = useState<string | null>(null);
+
+  async function exportRoster(destination: 'csv' | 'sheets') {
+    if (exporting) return;
+    setExporting(true); setError(null); setSheetUrl(null);
+    try {
+      const response = await fetch('/api/admin/export', destination === 'sheets' ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' } : { cache: 'no-store' });
+      if (!response.ok) { const result = await response.json() as { message?: string }; throw new Error(result.message ?? 'Export failed.'); }
+      if (destination === 'sheets') {
+        const result = await response.json() as { url: string };
+        setSheetUrl(result.url);
+      } else {
+        const url = URL.createObjectURL(await response.blob());
+        const anchor = document.createElement('a');
+        anchor.href = url; anchor.download = 'sccnh-signups.csv'; document.body.appendChild(anchor); anchor.click(); anchor.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+    } catch (error) { setError(error instanceof Error ? error.message : 'Export failed.'); }
+    finally { setExporting(false); }
+  }
 
   const load = useCallback(async () => {
     setError(null);
@@ -94,7 +115,7 @@ export function OrganizerApp({ organizerName }: { organizerName: string }) {
         {error && <div role="alert" className="mt-5 flex items-center justify-between gap-3 border-2 border-poppy bg-poppy-wash p-3 text-sm font-bold text-poppy-dark"><span>{error}</span><button onClick={load} aria-label="Retry"><RefreshCw className="size-4" /></button></div>}
         {loading && <div className="mt-8 animate-pulse border-2 border-ink bg-paper-deep p-8 font-display text-2xl">Loading the operation board…</div>}
 
-        {data && <section className="mt-7"><nav className="grid grid-cols-2 border-2 border-ink sm:grid-cols-4" aria-label="Organizer sections">{(['overview', 'volunteers', 'shifts', 'check-in'] as OrganizerView[]).map((tab) => <button key={tab} type="button" onClick={() => setView(tab)} aria-current={view === tab ? 'page' : undefined} className={`min-h-12 border-b-2 border-r-2 border-ink px-3 py-3 text-sm font-black uppercase tracking-[.08em] last:border-r-0 sm:border-b-0 ${view === tab ? 'bg-blue text-paper' : 'bg-paper text-ink hover:bg-paper-deep'}`}>{tab}</button>)}</nav><div className="mt-6">{view === 'overview' && <Overview data={data} />}{view === 'volunteers' && <VolunteerRoster volunteers={data.volunteers} mutate={mutate} />}{view === 'shifts' && <ShiftManager shifts={data.shifts} mutate={mutate} />}{view === 'check-in' && <CheckIn data={data} mutate={mutate} />}</div></section>}
+        {data && <section className="mt-7"><div className="mb-5 flex flex-wrap items-center gap-3"><button type="button" disabled={exporting} onClick={() => void exportRoster('csv')} className="border-2 border-blue px-3 py-2 text-sm font-bold text-blue disabled:opacity-40">Download CSV for Excel</button><button type="button" disabled={exporting} onClick={() => void exportRoster('sheets')} className="border-2 border-orange px-3 py-2 text-sm font-bold text-orange disabled:opacity-40">{exporting ? 'Exporting…' : 'Export to Google Sheets'}</button>{sheetUrl && <a href={sheetUrl} target="_blank" rel="noopener noreferrer" className="text-sm font-bold text-blue underline">Open spreadsheet</a>}</div><nav className="grid grid-cols-2 border-2 border-ink sm:grid-cols-4" aria-label="Organizer sections">{(['overview', 'volunteers', 'shifts', 'check-in'] as OrganizerView[]).map((tab) => <button key={tab} type="button" onClick={() => setView(tab)} aria-current={view === tab ? 'page' : undefined} className={`min-h-12 border-b-2 border-r-2 border-ink px-3 py-3 text-sm font-black uppercase tracking-[.08em] last:border-r-0 sm:border-b-0 ${view === tab ? 'bg-blue text-paper' : 'bg-paper text-ink hover:bg-paper-deep'}`}>{tab}</button>)}</nav><div className="mt-6">{view === 'overview' && <Overview data={data} />}{view === 'volunteers' && <VolunteerRoster volunteers={data.volunteers} mutate={mutate} />}{view === 'shifts' && <><ShiftRoster data={data} /><div className="mt-10"><ShiftManager shifts={data.shifts} mutate={mutate} /></div></>}{view === 'check-in' && <CheckIn data={data} mutate={mutate} />}</div></section>}
         </>}
       </main>
     </div>
@@ -109,9 +130,13 @@ function OrganizerLogin({ onSignedIn }: { onSignedIn: () => void }) {
     event.preventDefault(); setPending(true); setMessage(null);
     try {
       const response = await fetch('/api/admin/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ accessCode }) });
-      if (!response.ok) { setMessage('Organizer sign-in required.'); return; }
+      if (!response.ok) {
+        const result = await response.json() as { message?: string };
+        setMessage(response.status === 401 ? 'The organizer access code was not accepted.' : result.message ?? 'Organizer sign-in is unavailable. Try again later.');
+        return;
+      }
       onSignedIn();
-    } catch { setMessage('Organizer sign-in required.'); }
+    } catch { setMessage('Sign-in could not connect. Check your connection and try again.'); }
     finally { setPending(false); }
   }
   return <form onSubmit={signIn} className="mx-auto mt-10 max-w-md border-2 border-blue bg-paper-deep p-6"><div className="eyebrow text-orange">Organizer access</div><h2 className="mt-1 font-display text-3xl font-black">Enter access code</h2><label className="mt-5 block"><span className="sr-only">Access code</span><input type="password" value={accessCode} onChange={(event) => setAccessCode(event.target.value)} required className="field-input" /></label>{message && <p role="alert" className="mt-3 text-sm">{message}</p>}<button type="submit" disabled={pending} className="mt-4 h-11 w-full bg-orange font-bold text-paper">{pending ? 'Checking' : 'Enter'}</button></form>;
@@ -191,6 +216,16 @@ function VolunteerRoster({ volunteers, mutate }: { volunteers: AdminVolunteer[];
       {rows.length ? <div className="mt-4 overflow-x-auto border-2 border-ink"><table className="w-full min-w-[930px] border-collapse text-left"><thead className="bg-ink text-paper"><tr><th className="px-3 py-2 text-xs uppercase tracking-[.1em]">Volunteer</th><th className="px-3 py-2 text-xs uppercase tracking-[.1em]">Contact</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Shifts</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Training</th><th className="px-3 py-2 text-center text-xs uppercase tracking-[.1em]">Site lead</th><th className="px-3 py-2 text-right text-xs uppercase tracking-[.1em]">Action</th></tr></thead><tbody>{rows.map((volunteer) => <tr key={volunteer.id} className="border-b border-ink last:border-b-0"><td className="px-3 py-3 font-bold">{volunteer.lastName}, {volunteer.firstName}</td><td className="px-3 py-3 text-sm text-ink-soft"><div>{volunteer.email}</div><div>{volunteer.phone}</div></td><td className="px-3 py-3 text-center font-display text-xl font-black">{volunteer.shiftCount}</td><td className="px-3 py-3 text-center"><button onClick={() => toggle(volunteer)} disabled={pending === `${volunteer.id}:general`} aria-label={`Toggle training for ${volunteer.firstName} ${volunteer.lastName}`} aria-pressed={volunteer.trainings.general} className={`mx-auto grid size-8 place-items-center border-2 border-ink ${volunteer.trainings.general ? 'bg-ink text-paper' : 'bg-paper text-transparent'}`}><Check className="size-4" /></button></td><td className="px-3 py-3 text-center text-sm font-bold">{volunteer.wantsSiteLead ? 'Interested' : 'No'}</td><td className="px-3 py-3 text-right"><div className="flex justify-end gap-2"><button onClick={() => cancelShifts(volunteer)} disabled={!volunteer.shiftCount || pending === `${volunteer.id}:cancel`} aria-label={`Cancel active shifts for ${volunteer.firstName} ${volunteer.lastName}`} className="border border-poppy px-2 py-1 text-xs font-bold uppercase tracking-[.08em] text-poppy-dark hover:bg-poppy hover:text-paper disabled:cursor-not-allowed disabled:opacity-40">Cancel shifts</button><button onClick={() => requestRemoval(volunteer)} disabled={pending === `${volunteer.id}:delete`} aria-label={`Remove ${volunteer.firstName} ${volunteer.lastName}`} className="border border-ink px-2 py-1 text-xs font-bold uppercase tracking-[.08em] text-ink hover:bg-ink hover:text-paper disabled:cursor-not-allowed disabled:opacity-40">Remove</button></div></td></tr>)}</tbody></table></div> : <Empty title="No volunteers match." copy={volunteers.length ? 'Try another name or email.' : 'Volunteer records will appear after the first signup.'} />}
     </section>
   );
+}
+
+function ShiftRoster({ data }: { data: AdminSnapshot }) {
+  const [day, setDay] = useState('all');
+  const [location, setLocation] = useState('all');
+  const shifts = data.shifts.filter((shift) => (day === 'all' || shift.day === day) && (location === 'all' || shift.locationId === location));
+  return <section><SectionHeader title="Who is on each shift" copy="Names and contact details by date, location, and time. Exports include the entire roster." /><div className="mt-4 flex flex-wrap gap-3"><label className="text-sm">Day<select aria-label="Roster day" value={day} onChange={(event) => setDay(event.target.value)} className="field-input"><option value="all">All days</option>{[...new Set(data.shifts.map((shift) => shift.day))].map((date) => <option key={date} value={date}>{formatDay(date)}</option>)}</select></label><label className="text-sm">Location<select aria-label="Roster location" value={location} onChange={(event) => setLocation(event.target.value)} className="field-input"><option value="all">All locations</option>{[...new Map(data.shifts.map((shift) => [shift.locationId, shift.location.name])).entries()].map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label></div><div className="mt-5 space-y-3">{shifts.map((shift) => {
+    const signups = data.signups.filter((signup) => signup.shiftId === shift.id);
+    return <details key={shift.id} className="border-2 border-blue" open={signups.length > 0}><summary className="cursor-pointer bg-paper-deep px-4 py-3 text-sm font-bold text-blue">{formatDay(shift.day)} · {formatTimeRange(shift.startsAt, shift.endsAt)} · {shift.location.shortName} · {shift.title ?? shift.task.name} · {signups.length}/{shift.capacity}</summary>{signups.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b border-blue"><th className="p-3">Volunteer</th><th className="p-3">Personal email</th><th className="p-3">Phone</th><th className="p-3">Training</th></tr></thead><tbody>{signups.map((signup) => <tr key={signup.id} className="border-b border-blue last:border-b-0"><td className="p-3 font-bold">{signup.volunteerName}</td><td className="p-3">{signup.email}</td><td className="p-3">{signup.phone}</td><td className="p-3">{signup.trainingComplete ? 'Complete' : 'Pending'}</td></tr>)}</tbody></table></div> : <p className="p-4 text-sm">No signups yet.</p>}</details>;
+  })}</div></section>;
 }
 
 function ShiftManager({ shifts, mutate }: { shifts: ShiftView[]; mutate: (action: AdminAction) => Promise<boolean> }) {

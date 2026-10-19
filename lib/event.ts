@@ -4,6 +4,7 @@ export type EventInfo = {
   tagline: string;
   startDate: string;
   endDate: string;
+  bagelDay: string;
   overview: string;
   essentials: string[];
 };
@@ -40,7 +41,8 @@ export const EVENT: EventInfo = {
   name: 'Spread Cream Cheese Not Hate',
   tagline: 'Volunteer signup',
   startDate: '2027-01-25',
-  endDate: '2027-01-27',
+  endDate: '2027-01-28',
+  bagelDay: '2027-01-28',
   overview: 'Pick a shift.',
   essentials: [
     'Training is 1.5 hours.',
@@ -190,6 +192,7 @@ function timedShifts(day: string, locationId: string, startHour: number, endHour
   });
 }
 
+// Keep the original IDs so existing reservations follow the corrected dates.
 export const SHIFTS: ShiftSeed[] = [
   ...greek,
   ...bagging,
@@ -198,4 +201,7 @@ export const SHIFTS: ShiftSeed[] = [
   shift(wednesday, 'turlington', 'cleanup', 18, 0, 18, 30, 20, { title: 'Clean Up' }),
   ...timedShifts(wednesday, 'plaza', 8, 18, 30, 10),
   ...timedShifts(wednesday, 'hpnp', 9, 17, 60, 7),
-];
+].map((item) => {
+  const day = item.taskId === 'bagging' ? '2027-01-27' : item.taskId === 'announcing' ? monday : EVENT.bagelDay;
+  return { ...item, day, startsAt: `${day}${item.startsAt.slice(10)}`, endsAt: `${day}${item.endsAt.slice(10)}` };
+});
