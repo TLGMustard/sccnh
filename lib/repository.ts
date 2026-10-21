@@ -8,6 +8,7 @@ import { capacityUpdateDecision, shiftChangeDecision, shiftReservationDecision }
 import { volunteerRemovalDecision } from './admin-actions.ts';
 import { emailVerificationRequired } from './email-verification.ts';
 import { BROWSER_SESSION_SECONDS, selectedShiftIds, shiftsOverlap } from './browser-signup.ts';
+import { createSignupReceipt, type SignupReceipt } from './signup-receipt.ts';
 import type { SignupProfile } from './signup-profile';
 
 export type ShiftView = ShiftSeed & { location: (typeof LOCATIONS)[number]; task: (typeof TASKS)[number]; filled: number; remaining: number; state: AvailabilityState };
@@ -90,7 +91,7 @@ export async function getBrowserDashboard(managementKey: string): Promise<Browse
   return { shifts: rows.map((row) => ({ ...mapShift(row), signupId: row.signup_id, status: row.signup_status })) };
 }
 
-export async function claimBrowserShifts(input: SignupProfile & { shiftIds: unknown; consent: unknown }, managementKey: string): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
+export async function claimBrowserShifts(input: SignupProfile & { shiftIds: unknown; consent: unknown }, managementKey: string): Promise<{ ok: true; receipt: SignupReceipt } | { ok: false; code: string; message: string }> {
   const profile = normalizeSignupProfile(input);
   const shiftIds = selectedShiftIds(input.shiftIds);
   if (!profile.ok || !shiftIds || input.consent !== true) return { ok: false, code: 'invalid_input', message: !profile.ok ? profile.message : 'Select 1 to 20 shifts and accept the volunteer consent.' };
@@ -100,7 +101,7 @@ export async function claimBrowserShifts(input: SignupProfile & { shiftIds: unkn
   const value = profile.value;
   return getDatabase().begin(async (sql) => {
     await sql.unsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`volunteer-email:${value.email}`]);
-    const slots = await sql.unsafe<{ id: string; is_active: boolean; capacity: number; starts_at: string; ends_at: string }[]>('SELECT id, is_active, capacity, starts_at, ends_at FROM shifts WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE', [shiftIds]);
+    const slots = await sql.unsafe<{ id: string; is_active: boolean; capacity: number; starts_at: string; ends_at: string; day: string; location_name: string; task_name: string }[]>('SELECT s.id, s.is_active, s.capacity, s.starts_at, s.ends_at, s.day, l.name AS location_name, t.name AS task_name FROM shifts s JOIN locations l ON l.id = s.location_id JOIN tasks t ON t.id = s.task_id WHERE s.id = ANY($1::text[]) ORDER BY s.id FOR UPDATE', [shiftIds]);
     if (slots.length !== shiftIds.length || slots.some((slot) => !slot.is_active)) return { ok: false, code: 'unavailable', message: 'One selected shift is unavailable. Refresh and try again.' };
     if (shiftsOverlap(slots.map((slot) => ({ startsAt: slot.starts_at, endsAt: slot.ends_at })))) return { ok: false, code: 'overlap', message: 'Choose shifts that do not overlap.' };
     for (const slot of slots) {
@@ -116,7 +117,10 @@ export async function claimBrowserShifts(input: SignupProfile & { shiftIds: unkn
     const timestamp = nowIso();
     if (!existing) await sql.unsafe('INSERT INTO volunteers (id, email, first_name, last_name, phone, wants_site_lead, access_code_hash, created_at, browser_key) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)', [volunteerId, value.email, value.firstName, value.lastName, value.phone, value.wantsSiteLead, preparedHash, timestamp, managementKey]);
     for (const shiftId of shiftIds) await sql.unsafe("INSERT INTO signups (id, volunteer_id, shift_id, status, created_at, updated_at, management_key, management_expires_at, registration) VALUES ($1, $2, $3, 'confirmed', $4, $4, $5, $6, $7::jsonb) ON CONFLICT (volunteer_id, shift_id) DO UPDATE SET status = 'confirmed', updated_at = EXCLUDED.updated_at, management_key = EXCLUDED.management_key, management_expires_at = EXCLUDED.management_expires_at, registration = EXCLUDED.registration WHERE signups.status = 'cancelled'", [crypto.randomUUID(), volunteerId, shiftId, timestamp, managementKey, Date.now() + BROWSER_SESSION_SECONDS * 1000, { ...value, consentedAt: timestamp, consentVersion: 'sccnh-volunteer-v1' }]);
-    return { ok: true };
+    return {
+      ok: true,
+      receipt: createSignupReceipt(value, slots.map((slot) => ({ day: slot.day, startsAt: slot.starts_at, endsAt: slot.ends_at, locationName: slot.location_name, taskName: slot.task_name }))),
+    };
   });
 }
 

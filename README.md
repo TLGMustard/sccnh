@@ -6,7 +6,7 @@ Railway-hosted signup and organizer system for Spread Cream Cheese Not Hate.
 
 - Volunteers select up to 20 shifts and submit their name, personal email, required phone, site-lead interest, and consent once. All selected shifts are reserved in a single transaction. Overlapping selections are refused.
 - Bagel Day is **January 28, 2027**. Pre-packaging is **January 27**; announcing stays January 25. Shift IDs are preserved so existing bookings move to the corrected date. Organizer capacity overrides are retained.
-- New volunteer signup requires no password and does not send email. Personal email is unverified contact information, not proof of identity.
+- New volunteer signup requires no password. Personal email is unverified contact information, not proof of identity.
 - A random, HTTP-only browser cookie grants management of only the bookings created in that browser. Only the token's SHA-256 digest is stored in PostgreSQL; it expires after 120 days. Entering an existing email does not reveal earlier bookings, contact details, or grant management of them. Clearing cookies or using a different device requires organizer help until email verification/recovery is enabled.
 - The signup stores the submitted contact details, consent timestamp, and consent version with each booking. An existing volunteer's contact profile is never overwritten solely because someone typed the same email.
 - Registrations are grouped by browser and personal email. Reusing an email from a different browser creates an independent registration, rather than exposing or taking over the earlier one. Organizers can see and remove duplicates; verified cross-device identity and deduplication require email verification later. Within one browser, the same email cannot reserve the same shift twice.
@@ -37,7 +37,19 @@ Without these Google credentials, CSV download works and the Sheets button repor
 
 Deploy this version with the existing Railway pre-deploy command `npm run db:migrate`. Migrations `0003` through `0005` add nullable browser-management fields and registration snapshots and isolate browser registrations from legacy accounts; legacy records stay intact. Back up PostgreSQL first. The first schedule read atomically updates the corrected dates in place. No Resend installation or new signup-session secret is required. Keep `RATE_LIMIT_SECRET`, `ADMIN_ACCESS_CODE_HASH`, `ADMIN_SESSION_SECRET`, `DATABASE_URL`, and `APP_BASE_URL` configured as before.
 
-Validate a multi-shift signup, reload My shifts in the same browser, confirm a separate browser has no access to those bookings, and check the named roster and CSV as an organizer. Email confirmations and email-based recovery are deferred per the current request. The Google Sheets connection needs the three variables above before its button can export to Google.
+Validate a multi-shift signup, reload My shifts in the same browser, confirm a separate browser has no access to those bookings, and check the named roster and CSV as an organizer. The Google Sheets connection needs the three variables above before its button can export to Google.
+
+## Google Workspace confirmation email
+
+The website sends one confirmation receipt per completed multi-shift signup through a Google Apps Script web app. It sends no email when the signup fails, and an email delivery failure never reverses a valid reservation.
+
+1. In the nonprofit Workspace account that should send receipts, create or open the Apps Script project. Replace its contents with [`docs/apps-script-confirmation-web-app.gs`](docs/apps-script-confirmation-web-app.gs).
+2. In **Project Settings → Script Properties**, add `SCCNH_WEBHOOK_SECRET`. Generate its value with `openssl rand -base64 48`. Do not use an organizer code or reuse another secret.
+3. Deploy the project as a **Web app**: execute as the designated Workspace account, and allow access from anyone. Railway authenticates every request with the secret and timestamp; the script also uses a short replay guard. If your Workspace policy forbids external web apps, ask its administrator to permit this narrowly scoped deployment.
+4. In Railway’s web service, add `APPS_SCRIPT_WEBHOOK_URL` with the deployment’s `/exec` URL and `APPS_SCRIPT_WEBHOOK_SECRET` with the exact same generated secret. Keep both private. The URL is only read by the server and is never delivered to the browser.
+5. Redeploy, then make one controlled signup with an inbox you own. The success message must say **“Confirmation email sent.”** If it instead says delivery could not be completed, inspect the Apps Script execution history without logging volunteer data.
+
+The script accepts only a short-lived signed body, uses a cache-backed five-minute replay guard, validates the event’s expected dates and receipt fields, and logs no contact information. It returns an explicit success acknowledgement only after `MailApp` accepts the message. Google Workspace mail quota still applies.
 
 ## Railway variables
 
@@ -53,6 +65,8 @@ EMAIL_VERIFICATION_SECRET=<different 32-byte random secret>
 RESEND_API_KEY=<Resend secret>
 EMAIL_FROM=<verified sender>
 EMAIL_VERIFICATION_REQUIRED=false
+APPS_SCRIPT_WEBHOOK_URL=<Apps Script /exec URL>
+APPS_SCRIPT_WEBHOOK_SECRET=<same random secret stored in Script Properties>
 ```
 
 `ADMIN_SESSION_SECRET`, `RATE_LIMIT_SECRET`, and `EMAIL_VERIFICATION_SECRET` must be different values. Generate each separately:

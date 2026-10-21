@@ -7,6 +7,7 @@ import { boundedIdentifier } from '@/lib/signup-profile';
 import { consumeRateLimit } from '@/lib/rate-limit';
 import { requestNetworkIdentity } from '@/lib/security-key';
 import { readJsonRequest, requireSameOrigin, sensitiveResponseHeaders } from '@/lib/request-security';
+import { sendAppsScriptConfirmation } from '@/lib/apps-script-confirmation';
 
 export const dynamic = 'force-dynamic';
 const reply = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: sensitiveResponseHeaders });
@@ -40,7 +41,11 @@ export async function POST(request: NextRequest) {
     if (body.action === 'claim') {
       const result = await claimBrowserShifts({ firstName: text(body.firstName), lastName: text(body.lastName), email: text(body.email), phone: text(body.phone), wantsSiteLead: body.wantsSiteLead === true, shiftIds: body.shiftIds, consent: body.consent }, key);
       if (!result.ok) return reply(result, result.code === 'invalid_input' ? 400 : 409);
-      const response = reply({ ok: true, message: 'Shifts saved. View them in My shifts on this browser.' });
+      const delivery = await sendAppsScriptConfirmation({ ...result.receipt, appOrigin: getApplicationOrigin(request.nextUrl.origin) });
+      const message = delivery.delivered
+        ? 'Shifts saved. Confirmation email sent. View them in My shifts on this browser.'
+        : 'Shifts saved. We could not send the confirmation email. View them in My shifts on this browser.';
+      const response = reply({ ok: true, message, receipt: delivery.delivered ? 'sent' : 'failed' });
       response.cookies.set(browserCookieName(), token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', path: '/', maxAge: BROWSER_SESSION_SECONDS });
       return response;
     }

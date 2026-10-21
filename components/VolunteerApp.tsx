@@ -6,6 +6,7 @@ import { Check, MapPin, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { formatDay, formatTime, formatTimeRange } from '@/lib/domain';
+import { savedSignupMessage } from '@/lib/signup-message';
 import type { BrowserDashboard, PublicSnapshot, ShiftView } from '@/lib/repository';
 
 type Contact = { firstName: string; lastName: string; email: string; phone: string; wantsSiteLead: boolean };
@@ -95,9 +96,9 @@ export function VolunteerApp({ initial }: { initial: PublicSnapshot }) {
     if (pending || !consent || !selected.length) return;
     setPending(true); setMessage(null);
     try {
-      await send({ action: 'claim', shiftIds: selectedIds, ...contact, consent });
+      const result = await send({ action: 'claim', shiftIds: selectedIds, ...contact, consent });
       setSelectedIds([]); setCheckout(false); setView('mine');
-      setMessage('Shifts saved. Keep using this browser to view or change them.');
+      setMessage(savedSignupMessage(result.message));
       await Promise.all([loadMine(), refresh()]);
     } catch (error) { setMessage(error instanceof Error ? error.message : 'We could not save your shifts.'); }
     finally { setPending(false); }
