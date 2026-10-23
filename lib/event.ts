@@ -45,9 +45,7 @@ export const EVENT: EventInfo = {
   bagelDay: '2027-01-28',
   overview: 'Pick a shift.',
   essentials: [
-    'Training is 1.5 hours.',
     'Bring your SCCNH shirt. Event shirts are provided at training.',
-    'Interested site leads will be contacted by the VC of Ops.',
   ],
 };
 

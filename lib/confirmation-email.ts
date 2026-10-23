@@ -26,8 +26,8 @@ export function buildShiftConfirmation(input: ConfirmationInput): ConfirmationMe
   const time = formatTimeRange(input.startsAt, input.endsAt);
   const baseUrl = new URL(input.appBaseUrl).origin;
   const subject = `SCCNH shift confirmed: ${day} at ${time}`;
-  const text = `Hi ${input.firstName},\n\nYour SCCNH shift is confirmed.\n\n${day}\n${time}\n${input.location}\n\nComplete the required 1.5-hour training before your shift. Bring your SCCNH shirt. Event shirts are provided at training.\n\nView or cancel your shift: ${baseUrl}\n\nUF Hillel`;
-  const html = `<p>Hi ${escapeHtml(input.firstName)},</p><p>Your SCCNH shift is confirmed.</p><p><strong>${escapeHtml(day)}</strong><br>${escapeHtml(time)}<br>${escapeHtml(input.location)}</p><p>Complete the required 1.5-hour training before your shift. Bring your SCCNH shirt. Event shirts are provided at training.</p><p><a href="${escapeHtml(baseUrl)}">View or cancel your shift</a></p><p>UF Hillel</p>`;
+  const text = `Hi ${input.firstName},\n\nYour SCCNH shift is confirmed.\n\n${day}\n${time}\n${input.location}\n\nBring your SCCNH shirt. Event shirts are provided at training.\n\nView or cancel your shift: ${baseUrl}\n\nUF Hillel`;
+  const html = `<p>Hi ${escapeHtml(input.firstName)},</p><p>Your SCCNH shift is confirmed.</p><p><strong>${escapeHtml(day)}</strong><br>${escapeHtml(time)}<br>${escapeHtml(input.location)}</p><p>Bring your SCCNH shirt. Event shirts are provided at training.</p><p><a href="${escapeHtml(baseUrl)}">View or cancel your shift</a></p><p>UF Hillel</p>`;
   return { to: input.to, subject, text, html };
 }
 

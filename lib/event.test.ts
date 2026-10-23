@@ -55,13 +55,11 @@ void test('corrected dates preserve existing shift IDs and reservations', () => 
   assert.ok(SHIFTS.every((shift) => shift.startsAt.startsWith(shift.day) && shift.endsAt.startsWith(shift.day)));
 });
 
-void test('publishes no law site and requires only one 1.5-hour training', () => {
+void test('publishes no law site and keeps the event shirt reminder', () => {
   assert.equal(LOCATIONS.some((location) => /law/i.test(location.name)), false);
   assert.equal(SHIFTS.some((shift) => /law/i.test(shift.locationId)), false);
   assert.ok(TASKS.every((task) => task.training === 'general'));
   assert.deepEqual(EVENT.essentials, [
-    'Training is 1.5 hours.',
     'Bring your SCCNH shirt. Event shirts are provided at training.',
-    'Interested site leads will be contacted by the VC of Ops.',
   ]);
 });

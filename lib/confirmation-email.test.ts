@@ -11,7 +11,6 @@ const input = {
 void test('builds a useful receipt without the access code', () => {
   const message = buildShiftConfirmation(input);
   assert.match(message.text, /Turlington Plaza/);
-  assert.match(message.text, /1\.5-hour training/);
   assert.match(message.text, /SCCNH shirt/);
   assert.match(message.text, /https:\/\/signup\.example/);
   assert.doesNotMatch(JSON.stringify(message), /must-never-appear/);

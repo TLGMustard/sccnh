@@ -27,6 +27,8 @@
 }
 
 :root {
+  --font-body-source: var(--font-poppins);
+  --font-display-source: var(--font-poppins);
   --paper: #fffaf1;
   --paper-deep: #fff0d9;
   --ink: #151515;
@@ -45,7 +47,7 @@
   * { border-color: var(--blue); }
   html { scroll-behavior: smooth; font-family: var(--font-body-source), sans-serif; }
   body { margin: 0; min-width: 320px; background: var(--paper); color: var(--ink); font-family: var(--font-body-source), sans-serif; font-size: 16px; -webkit-font-smoothing: antialiased; }
-  button, input, select { font: inherit; }
+  button, input, select, textarea { font: inherit; }
   h1, h2, h3 { color: var(--blue); }
   button, summary, a { -webkit-tap-highlight-color: transparent; }
   button { cursor: pointer; }
@@ -54,7 +56,7 @@
 }
 
 @layer utilities {
-  .font-display { font-family: var(--font-display-source), Georgia, serif; }
+  .font-display { font-family: var(--font-display-source), sans-serif; }
   .font-display:not(.text-paper) { color: var(--blue) !important; }
   .title-blue { color: var(--blue) !important; }
   .title-orange { color: var(--orange) !important; }

@@ -1,9 +1,8 @@
 import type { Metadata } from 'next';
-import { Bebas_Neue, IBM_Plex_Sans } from 'next/font/google';
+import { Poppins } from 'next/font/google';
 import './globals.css';
 
-const display = Bebas_Neue({ subsets: ['latin'], display: 'swap', variable: '--font-display-source', weight: '400' });
-const body = IBM_Plex_Sans({ subsets: ['latin'], display: 'swap', variable: '--font-body-source', weight: ['400', '500', '600', '700'] });
+const poppins = Poppins({ subsets: ['latin'], display: 'swap', variable: '--font-poppins', weight: ['400', '500', '600', '700', '800', '900'] });
 
 export const metadata: Metadata = {
   title: 'SCCNH 2027 Volunteer Signup · UF Hillel',
@@ -11,5 +10,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en" className={`${display.variable} ${body.variable}`}><body>{children}</body></html>;
+  return <html lang="en" className={poppins.variable}><body>{children}</body></html>;
 }

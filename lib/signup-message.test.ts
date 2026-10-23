@@ -15,5 +15,5 @@ void test('preserves the server receipt result after a successful signup', async
 
 void test('falls back to a neutral saved message when the server result is missing', async () => {
   const message = await savedMessage();
-  assert.equal(message(null), 'Shifts saved. View them in My shifts on this browser.');
+  assert.equal(message(null), 'Shifts saved. View them in My shifts.');
 });

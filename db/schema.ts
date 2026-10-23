@@ -13,9 +13,16 @@ export const tasks = pgTable('tasks', {
 export const shifts = pgTable('shifts', {
   id: text('id').primaryKey(), day: text('day').notNull(), locationId: text('location_id').notNull().references(() => locations.id), taskId: text('task_id').notNull().references(() => tasks.id), startsAt: text('starts_at').notNull(), endsAt: text('ends_at').notNull(), capacity: integer('capacity').notNull(), title: text('title'), description: text('description'), isActive: boolean('is_active').notNull().default(true),
 }, (table) => [index('idx_shifts_day_start').on(table.day, table.startsAt)]);
+export const volunteerAccounts = pgTable('volunteer_accounts', {
+  id: text('id').primaryKey(), email: text('email').notNull(), phoneHash: text('phone_hash').notNull(), managementKey: text('management_key').notNull(), createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+}, (table) => [uniqueIndex('uq_volunteer_accounts_email').on(table.email)]);
+export const volunteerSessions = pgTable('volunteer_sessions', {
+  tokenHash: text('token_hash').primaryKey(), accountId: text('account_id').notNull().references(() => volunteerAccounts.id, { onDelete: 'cascade' }), expiresAt: bigint('expires_at', { mode: 'number' }).notNull(),
+}, (table) => [index('idx_volunteer_sessions_expiry').on(table.expiresAt)]);
 export const volunteers = pgTable('volunteers', {
   id: text('id').primaryKey(), email: text('email').notNull(), firstName: text('first_name').notNull(), lastName: text('last_name').notNull(), phone: text('phone').notNull().default(''), wantsSiteLead: boolean('wants_site_lead').notNull().default(false), accessCodeHash: text('access_code_hash').notNull(), createdAt: text('created_at').notNull(), browserKey: text('browser_key'),
-}, (table) => [uniqueIndex('uq_volunteers_legacy_email').on(table.email).where(sql`${table.browserKey} IS NULL`), uniqueIndex('uq_volunteers_browser_email').on(table.email, table.browserKey)]);
+  accountId: text('account_id').references(() => volunteerAccounts.id),
+}, (table) => [uniqueIndex('uq_volunteers_legacy_email').on(table.email).where(sql`${table.browserKey} IS NULL`), uniqueIndex('uq_volunteers_browser_email').on(table.email, table.browserKey), index('idx_volunteers_account').on(table.accountId)]);
 export const signups = pgTable('signups', {
   id: text('id').primaryKey(), volunteerId: text('volunteer_id').notNull().references(() => volunteers.id), shiftId: text('shift_id').notNull().references(() => shifts.id), status: text('status').notNull(), createdAt: text('created_at').notNull(), updatedAt: text('updated_at').notNull(), managementKey: text('management_key'), managementExpiresAt: bigint('management_expires_at', { mode: 'number' }), registration: jsonb('registration'),
 }, (table) => [uniqueIndex('uq_signups_volunteer_shift').on(table.volunteerId, table.shiftId), index('idx_signups_shift_status').on(table.shiftId, table.status), index('idx_signups_management_key').on(table.managementKey)]);

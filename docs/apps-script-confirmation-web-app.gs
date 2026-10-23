@@ -106,8 +106,8 @@ function confirmationMessage(request) {
   const shiftText = request.receipt.shifts.map((shift) => `${SCCNH.dateLabels[shift.date]}\n${timeRange(shift.startsAt, shift.endsAt)}\n${shift.location} · ${shift.role}`).join('\n\n');
   const shiftHtml = request.receipt.shifts.map((shift) => `<li><strong>${escapeHtml(SCCNH.dateLabels[shift.date])}</strong><br>${escapeHtml(timeRange(shift.startsAt, shift.endsAt))}<br>${escapeHtml(shift.location)} · ${escapeHtml(shift.role)}</li>`).join('');
   const subject = `SCCNH shifts confirmed (${request.receipt.shifts.length})`;
-  const text = `Hi ${request.receipt.firstName},\n\nYour SCCNH shifts are confirmed.\n\n${shiftText}\n\nComplete the required 1.5-hour training before your shift. Bring your SCCNH shirt. Event shirts are provided at training.\n\nUF Hillel`;
-  const html = `<p>Hi ${escapeHtml(request.receipt.firstName)},</p><p>Your SCCNH shifts are confirmed.</p><ul>${shiftHtml}</ul><p>Complete the required 1.5-hour training before your shift. Bring your SCCNH shirt. Event shirts are provided at training.</p><p>UF Hillel</p>`;
+  const text = `Hi ${request.receipt.firstName},\n\nYour SCCNH shifts are confirmed.\n\n${shiftText}\n\nBring your SCCNH shirt. Event shirts are provided at training.\n\nUF Hillel`;
+  const html = `<p>Hi ${escapeHtml(request.receipt.firstName)},</p><p>Your SCCNH shifts are confirmed.</p><ul>${shiftHtml}</ul><p>Bring your SCCNH shirt. Event shirts are provided at training.</p><p>UF Hillel</p>`;
   return { subject, text, html };
 }
 

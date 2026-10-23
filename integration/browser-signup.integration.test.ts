@@ -10,6 +10,7 @@ if (!url || !['localhost', '127.0.0.1', '[::1]'].includes(new URL(url).hostname)
 process.env.DATABASE_URL = url;
 const { getDatabase } = await import('../db/index.ts');
 const { claimBrowserShifts, getBrowserDashboard, getPublicSnapshot, cancelBrowserSignup, changeBrowserSignup, getAdminSnapshot } = await import('../lib/repository.ts');
+const { authenticateAccount, accountForSession, revokeAccountSession } = await import('../lib/account-repository.ts');
 const sql = postgres(url, { max: 5, prepare: false });
 const prefix = `browser-${randomUUID()}`;
 const key = () => browserManagementKey(newBrowserToken());
@@ -22,8 +23,10 @@ async function slot(suffix: string, capacity = 3, hour = 8) {
 
 before(async () => { await getPublicSnapshot(); });
 after(async () => {
+  await sql`DELETE FROM trainings WHERE volunteer_id IN (SELECT id FROM volunteers WHERE email LIKE ${`${prefix}%`})`;
   await sql`DELETE FROM signups WHERE shift_id LIKE ${`${prefix}%`} OR volunteer_id IN (SELECT id FROM volunteers WHERE email LIKE ${`${prefix}%`})`;
   await sql`DELETE FROM volunteers WHERE email LIKE ${`${prefix}%`}`;
+  await sql`DELETE FROM volunteer_accounts WHERE email LIKE ${`${prefix}%`}`;
   await sql`DELETE FROM shifts WHERE id LIKE ${`${prefix}%`}`;
   await sql.end();
   await getDatabase().end();
@@ -141,4 +144,63 @@ void test('date correction moves existing bookings in place without resetting or
     assert.equal(after.startsAt, '2027-01-28T08:00:00-05:00');
     assert.equal(after.capacity, 17);
   } finally { await sql`UPDATE shifts SET capacity = 15 WHERE id = ${shiftId}`; }
+});
+
+void test('email and phone sign-in links matching historical bookings across devices without exposing other contacts', async () => {
+  const email = profile(40, []).email;
+  const first = await slot('account-first');
+  const second = await slot('account-second', 3, 10);
+  const unrelated = await slot('account-other-phone', 3, 12);
+  await claimBrowserShifts(profile(40, [first]), key());
+  await claimBrowserShifts({ ...profile(40, [second]), phone: '+1 (352) 555-0100' }, key());
+  await claimBrowserShifts({ ...profile(40, [unrelated]), phone: '3525550199' }, key());
+  assert.equal(await authenticateAccount(email, '3525550000'), null);
+  const login = await authenticateAccount(email.toUpperCase(), '(352) 555-0100');
+  assert.ok(login);
+  const secondDevice = await authenticateAccount(email, '+1 352-555-0100');
+  assert.ok(secondDevice);
+  assert.notEqual(login.token, secondDevice.token);
+  assert.deepEqual((await getBrowserDashboard(secondDevice.account.management_key)).shifts.map((shift) => shift.id), [first, second]);
+  const [original] = await sql`SELECT volunteer_id FROM signups WHERE shift_id = ${first}`;
+  await sql`INSERT INTO trainings (id, volunteer_id, type, completed_at, completed_by) VALUES (${randomUUID()}, ${original.volunteer_id}, 'general', ${new Date().toISOString()}, 'local-test')`;
+  const later = await slot('account-retains-record', 3, 14);
+  assert.equal((await claimBrowserShifts({ ...profile(40, [later]), wantsSiteLead: false }, login.account.management_key, login.account.id)).ok, true);
+  const [saved] = await sql`SELECT volunteer_id, registration FROM signups WHERE shift_id = ${later}`;
+  assert.equal(saved.volunteer_id, original.volunteer_id, 'New account bookings retain the existing trained volunteer record');
+  assert.equal(saved.registration.wantsSiteLead, true, 'Signup must not clear existing site-lead records');
+  assert.equal(await authenticateAccount(email, '3525550199'), null, 'An established identity cannot be replaced using a different phone');
+  assert.equal(await authenticateAccount(email, '3525550199', true), null);
+  const [stored] = await sql`SELECT phone_hash FROM volunteer_accounts WHERE email = ${email}`;
+  assert.equal(stored.phone_hash.includes('3525550100'), false);
+  const [session] = await sql`SELECT token_hash FROM volunteer_sessions WHERE account_id = ${login.account.id} LIMIT 1`;
+  assert.notEqual(session.token_hash, login.token);
+  assert.ok(await accountForSession(login.token));
+  await revokeAccountSession(login.token);
+  assert.equal(await accountForSession(login.token), null);
+  assert.ok(await accountForSession(secondDevice.token), 'Signing out one device must not sign out the other');
+  await sql`UPDATE volunteer_sessions SET expires_at = 0 WHERE account_id = ${login.account.id}`;
+  assert.equal(await accountForSession(secondDevice.token), null);
+  assert.equal(await accountForSession('forged'), null);
+});
+
+void test('account booking, cross-device changes, duplicate prevention and forged cancellation use the authenticated identity', async () => {
+  const input = profile(41, []);
+  assert.equal(await authenticateAccount(input.email, input.phone), null);
+  const login = await authenticateAccount(input.email, input.phone, true);
+  assert.ok(login);
+  const first = await slot('account-book');
+  const overlapping = await slot('account-overlap');
+  const target = await slot('account-target', 3, 10);
+  assert.equal((await claimBrowserShifts({ ...input, shiftIds: [first] }, login.account.management_key, login.account.id)).ok, true);
+  assert.equal((await claimBrowserShifts({ ...input, shiftIds: [overlapping] }, login.account.management_key, login.account.id)).ok, false);
+  assert.equal((await claimBrowserShifts({ ...input, shiftIds: [first] }, login.account.management_key, login.account.id)).ok, false);
+  assert.equal((await claimBrowserShifts({ ...input, email: profile(42, []).email, shiftIds: [target] }, login.account.management_key, login.account.id)).ok, false);
+  const secondDevice = await authenticateAccount(input.email, input.phone);
+  assert.ok(secondDevice);
+  const [booking] = (await getBrowserDashboard(secondDevice.account.management_key)).shifts;
+  assert.equal(await cancelBrowserSignup(booking.signupId, key()), false);
+  assert.equal((await changeBrowserSignup(booking.signupId, target, secondDevice.account.management_key)).ok, true);
+  assert.equal((await getBrowserDashboard(login.account.management_key)).shifts[0].id, target);
+  assert.equal(await cancelBrowserSignup(booking.signupId, secondDevice.account.management_key), true);
+  assert.equal((await getBrowserDashboard(login.account.management_key)).shifts.length, 0);
 });

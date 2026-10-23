@@ -91,7 +91,7 @@ export async function getBrowserDashboard(managementKey: string): Promise<Browse
   return { shifts: rows.map((row) => ({ ...mapShift(row), signupId: row.signup_id, status: row.signup_status })) };
 }
 
-export async function claimBrowserShifts(input: SignupProfile & { shiftIds: unknown; consent: unknown }, managementKey: string): Promise<{ ok: true; receipt: SignupReceipt } | { ok: false; code: string; message: string }> {
+export async function claimBrowserShifts(input: SignupProfile & { shiftIds: unknown; consent: unknown }, managementKey: string, accountId?: string): Promise<{ ok: true; receipt: SignupReceipt } | { ok: false; code: string; message: string }> {
   const profile = normalizeSignupProfile(input);
   const shiftIds = selectedShiftIds(input.shiftIds);
   if (!profile.ok || !shiftIds || input.consent !== true) return { ok: false, code: 'invalid_input', message: !profile.ok ? profile.message : 'Select 1 to 20 shifts and accept the volunteer consent.' };
@@ -101,6 +101,10 @@ export async function claimBrowserShifts(input: SignupProfile & { shiftIds: unkn
   const value = profile.value;
   return getDatabase().begin(async (sql) => {
     await sql.unsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`volunteer-email:${value.email}`]);
+    if (accountId) {
+      const [account] = await sql.unsafe('SELECT id FROM volunteer_accounts WHERE id = $1 AND email = $2 AND management_key = $3', [accountId, value.email, managementKey]);
+      if (!account) return { ok: false, code: 'access_denied', message: 'Sign in again to save your shifts.' };
+    }
     const slots = await sql.unsafe<{ id: string; is_active: boolean; capacity: number; starts_at: string; ends_at: string; day: string; location_name: string; task_name: string }[]>('SELECT s.id, s.is_active, s.capacity, s.starts_at, s.ends_at, s.day, l.name AS location_name, t.name AS task_name FROM shifts s JOIN locations l ON l.id = s.location_id JOIN tasks t ON t.id = s.task_id WHERE s.id = ANY($1::text[]) ORDER BY s.id FOR UPDATE', [shiftIds]);
     if (slots.length !== shiftIds.length || slots.some((slot) => !slot.is_active)) return { ok: false, code: 'unavailable', message: 'One selected shift is unavailable. Refresh and try again.' };
     if (shiftsOverlap(slots.map((slot) => ({ startsAt: slot.starts_at, endsAt: slot.ends_at })))) return { ok: false, code: 'overlap', message: 'Choose shifts that do not overlap.' };
@@ -108,14 +112,19 @@ export async function claimBrowserShifts(input: SignupProfile & { shiftIds: unkn
       const [count] = await sql.unsafe<{ filled: number }[]>("SELECT COUNT(*)::int AS filled FROM signups WHERE shift_id = $1 AND status IN ('confirmed', 'checked_in')", [slot.id]);
       if (Number(count.filled) >= slot.capacity) return { ok: false, code: 'full', message: 'One selected shift just filled. Nothing was booked. Update your selection.' };
     }
-    const [existing] = await sql.unsafe<{ id: string }[]>('SELECT id FROM volunteers WHERE email = $1 AND browser_key = $2 FOR UPDATE', [value.email, managementKey]);
+    const priorShifts = await sql.unsafe<{ starts_at: string; ends_at: string; shift_id: string }[]>("SELECT s.starts_at, s.ends_at, s.id AS shift_id FROM signups sg JOIN shifts s ON s.id = sg.shift_id WHERE sg.management_key = $1 AND sg.management_expires_at > $2 AND sg.status IN ('confirmed', 'checked_in')", [managementKey, Date.now()]);
+    if (slots.some((slot) => priorShifts.some((prior) => Date.parse(slot.starts_at) < Date.parse(prior.ends_at) && Date.parse(prior.starts_at) < Date.parse(slot.ends_at)))) return { ok: false, code: 'overlap', message: 'You already have a shift during this time. Check My shifts.' };
+    const [existing] = accountId
+      ? await sql.unsafe<{ id: string; wants_site_lead: boolean }[]>("SELECT v.id, v.wants_site_lead FROM volunteers v WHERE v.email = $1 AND v.account_id = $2 ORDER BY EXISTS (SELECT 1 FROM trainings tr WHERE tr.volunteer_id = v.id AND tr.type = 'general') DESC, v.created_at, v.id LIMIT 1 FOR UPDATE", [value.email, accountId])
+      : await sql.unsafe<{ id: string; wants_site_lead: boolean }[]>('SELECT id, wants_site_lead FROM volunteers WHERE email = $1 AND browser_key = $2 FOR UPDATE', [value.email, managementKey]);
+    if (accountId) value.wantsSiteLead = existing?.wants_site_lead ?? false;
     const volunteerId = existing?.id ?? crypto.randomUUID();
     const duplicates = existing ? await sql.unsafe("SELECT id FROM signups WHERE volunteer_id = $1 AND shift_id = ANY($2::text[]) AND status IN ('confirmed', 'checked_in')", [volunteerId, shiftIds]) : [];
     // An email is contact data, not an identity credential. Other browsers and legacy
     // accounts are isolated so signup cannot disclose whether an email is registered.
     if (duplicates.length) return { ok: false, code: 'unavailable', message: 'This selection could not be booked. Check My shifts in the browser you used before, or contact an organizer.' };
     const timestamp = nowIso();
-    if (!existing) await sql.unsafe('INSERT INTO volunteers (id, email, first_name, last_name, phone, wants_site_lead, access_code_hash, created_at, browser_key) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)', [volunteerId, value.email, value.firstName, value.lastName, value.phone, value.wantsSiteLead, preparedHash, timestamp, managementKey]);
+    if (!existing) await sql.unsafe('INSERT INTO volunteers (id, email, first_name, last_name, phone, wants_site_lead, access_code_hash, created_at, browser_key, account_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', [volunteerId, value.email, value.firstName, value.lastName, value.phone, value.wantsSiteLead, preparedHash, timestamp, managementKey, accountId ?? null]);
     for (const shiftId of shiftIds) await sql.unsafe("INSERT INTO signups (id, volunteer_id, shift_id, status, created_at, updated_at, management_key, management_expires_at, registration) VALUES ($1, $2, $3, 'confirmed', $4, $4, $5, $6, $7::jsonb) ON CONFLICT (volunteer_id, shift_id) DO UPDATE SET status = 'confirmed', updated_at = EXCLUDED.updated_at, management_key = EXCLUDED.management_key, management_expires_at = EXCLUDED.management_expires_at, registration = EXCLUDED.registration WHERE signups.status = 'cancelled'", [crypto.randomUUID(), volunteerId, shiftId, timestamp, managementKey, Date.now() + BROWSER_SESSION_SECONDS * 1000, { ...value, consentedAt: timestamp, consentVersion: 'sccnh-volunteer-v1' }]);
     return {
       ok: true,
@@ -136,6 +145,8 @@ export async function changeBrowserSignup(signupId: string, targetShiftId: strin
     const [source] = await sql.unsafe<{ volunteer_id: string; shift_id: string }[]>("SELECT volunteer_id, shift_id FROM signups WHERE id = $1 AND management_key = $2 AND management_expires_at > $3 AND status = 'confirmed' FOR UPDATE", [signupId, managementKey, Date.now()]);
     if (!source) return { ok: false, message: 'That shift could not be found in this browser.' };
     const [target] = await sql.unsafe<{ is_active: boolean; capacity: number }[]>('SELECT is_active, capacity FROM shifts WHERE id = $1 FOR UPDATE', [targetShiftId]);
+    const overlaps = await sql.unsafe("SELECT sg.id FROM signups sg JOIN shifts booked ON booked.id = sg.shift_id JOIN shifts target ON target.id = $1 WHERE sg.management_key = $2 AND sg.management_expires_at > $3 AND sg.id <> $4 AND sg.status IN ('confirmed', 'checked_in') AND booked.starts_at::timestamptz < target.ends_at::timestamptz AND target.starts_at::timestamptz < booked.ends_at::timestamptz LIMIT 1", [targetShiftId, managementKey, Date.now(), signupId]);
+    if (overlaps.length) return { ok: false, message: 'You already have a shift during this time.' };
     const [count] = await sql.unsafe<{ filled: number }[]>("SELECT COUNT(*)::int AS filled FROM signups WHERE shift_id = $1 AND status IN ('confirmed', 'checked_in')", [targetShiftId]);
     const decision = shiftChangeDecision({ sourceExists: true, sourceShiftId: source.shift_id, targetShiftId, targetExists: Boolean(target), targetIsActive: target?.is_active ?? false, targetCapacity: Number(target?.capacity ?? 0), targetFilled: Number(count.filled) });
     if (!decision.ok) return decision;
@@ -242,11 +253,12 @@ export async function deleteVolunteer(volunteerId: string): Promise<{ ok: boolea
   const decision = volunteerRemovalDecision(volunteerId);
   if (!decision.ok) return decision;
   return getDatabase().begin(async (sql) => {
-    const volunteer = await sql.unsafe<{ id: string }[]>('SELECT id FROM volunteers WHERE id = $1 FOR UPDATE', [volunteerId]);
+    const volunteer = await sql.unsafe<{ id: string; account_id: string | null }[]>('SELECT id, account_id FROM volunteers WHERE id = $1 FOR UPDATE', [volunteerId]);
     if (!volunteer[0]) return { ok: false, message: 'Volunteer not found.' };
     await sql.unsafe('DELETE FROM trainings WHERE volunteer_id = $1', [volunteerId]);
     await sql.unsafe('DELETE FROM signups WHERE volunteer_id = $1', [volunteerId]);
     await sql.unsafe('DELETE FROM volunteers WHERE id = $1', [volunteerId]);
+    if (volunteer[0].account_id) await sql.unsafe('DELETE FROM volunteer_accounts a WHERE a.id = $1 AND NOT EXISTS (SELECT 1 FROM volunteers v WHERE v.account_id = a.id)', [volunteer[0].account_id]);
     return { ok: true, message: 'Volunteer record removed.' };
   });
 }
